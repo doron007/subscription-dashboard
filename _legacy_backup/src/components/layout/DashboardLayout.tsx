@@ -1,5 +1,3 @@
-'use client';
-
 import { Sidebar } from './Sidebar';
 
 interface DashboardLayoutProps {
@@ -7,11 +5,10 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
-    // Fixed layout, sidebar handles its own fixed position
     return (
         <div className="flex bg-slate-50 min-h-screen">
             <Sidebar />
-            <main className="flex-1 ml-64 min-h-screen">
+            <main className="flex-1 overflow-auto h-screen">
                 <div className="max-w-7xl mx-auto px-8 py-8">
                     {children}
                 </div>

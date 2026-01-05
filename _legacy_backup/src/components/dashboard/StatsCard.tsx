@@ -1,6 +1,6 @@
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import type { MetricCardProps } from '@/types';
+import { cn } from '../../lib/utils';
+import type { MetricCardProps } from '../../types';
 
 export function StatsCard({ label, value, trend, icon: Icon }: MetricCardProps) {
     return (

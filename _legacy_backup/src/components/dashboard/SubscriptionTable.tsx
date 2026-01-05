@@ -1,62 +1,18 @@
-import type { Subscription } from '@/types';
-import { formatCurrency, formatDate, cn } from '@/lib/utils';
+import type { Subscription } from '../../types';
+import { formatCurrency, formatDate, cn } from '../../lib/utils';
 import { UtilizationBar } from './UtilizationBar';
-import { MoreHorizontal, AlertCircle, Search } from 'lucide-react';
-import { useState, useMemo } from 'react';
-import Link from 'next/link';
+import { MoreHorizontal, AlertCircle } from 'lucide-react';
 
 interface SubscriptionTableProps {
     subscriptions: Subscription[];
-    enableSearch?: boolean;
-    limit?: number;
-    title?: string;
 }
 
-export function SubscriptionTable({ subscriptions, enableSearch = false, limit, title = "Active Subscriptions" }: SubscriptionTableProps) {
-    const [searchTerm, setSearchTerm] = useState('');
-
-    const filteredSubscriptions = useMemo(() => {
-        let result = subscriptions;
-
-        if (searchTerm) {
-            const lower = searchTerm.toLowerCase();
-            result = result.filter(sub =>
-                sub.name.toLowerCase().includes(lower) ||
-                sub.category.toLowerCase().includes(lower) ||
-                sub.owner.name.toLowerCase().includes(lower)
-            );
-        }
-
-        return result;
-    }, [subscriptions, searchTerm]);
-
-    const displaySubscriptions = limit ? filteredSubscriptions.slice(0, limit) : filteredSubscriptions;
-
+export function SubscriptionTable({ subscriptions }: SubscriptionTableProps) {
     return (
         <div className="bg-white border border-slate-200 rounded-xl shadow-clean overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4">
-                <h3 className="font-semibold text-slate-900 whitespace-nowrap">{title}</h3>
-
-                <div className="flex items-center gap-4 flex-1 justify-end">
-                    {enableSearch && (
-                        <div className="relative w-full max-w-md">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                            <input
-                                type="text"
-                                placeholder="Search subscriptions..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-200 bg-slate-50 focus:bg-white transition-all"
-                            />
-                        </div>
-                    )}
-
-                    {!enableSearch && limit && (
-                        <Link href="/subscriptions" className="text-sm text-slate-500 hover:text-slate-900 font-medium whitespace-nowrap">
-                            View All
-                        </Link>
-                    )}
-                </div>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="font-semibold text-slate-900">Active Subscriptions</h3>
+                <button className="text-sm text-slate-500 hover:text-slate-900 font-medium">View All</button>
             </div>
 
             <div className="overflow-x-auto">
@@ -73,12 +29,8 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {displaySubscriptions.map((sub) => (
-                            <tr
-                                key={sub.id}
-                                className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
-                                onClick={() => window.location.href = `/subscriptions/${sub.id}`}
-                            >
+                        {subscriptions.map((sub) => (
+                            <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors group">
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-lg border border-slate-200 p-1.5 bg-white flex items-center justify-center">
@@ -131,13 +83,6 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                     </tbody>
                 </table>
             </div>
-
-            {/* Empty State */}
-            {displaySubscriptions.length === 0 && (
-                <div className="text-center py-12 text-slate-500 text-sm">
-                    No subscriptions found.
-                </div>
-            )}
         </div>
     );
 }

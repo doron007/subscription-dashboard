@@ -1,9 +1,8 @@
 /** @type {import('tailwindcss').Config} */
-module.exports = {
+export default {
     content: [
-        "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
-        "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
-        "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+        "./index.html",
+        "./src/**/*.{js,ts,jsx,tsx}",
     ],
     theme: {
         extend: {
@@ -22,9 +21,30 @@ module.exports = {
                     900: '#0f172a', // Metric Values
                     950: '#020617',
                 },
+                primary: {
+                    DEFAULT: '#0f172a', // Link to Slate 900
+                    foreground: '#f8fafc', // Slate 50
+                },
+                secondary: {
+                    DEFAULT: '#f1f5f9', // Slate 100
+                    foreground: '#0f172a', // Slate 900
+                },
+                muted: {
+                    DEFAULT: '#f8fafc', // Slate 50
+                    foreground: '#64748b', // Slate 500
+                },
+                accent: {
+                    DEFAULT: '#e2e8f0', // Slate 200
+                    foreground: '#0f172a', // Slate 900
+                },
+                destructive: {
+                    DEFAULT: '#ef4444', // Red 500 (Use sparingly for errors)
+                    foreground: '#f8fafc',
+                },
+                border: '#e2e8f0', // Slate 200
             },
             fontFamily: {
-                sans: ['var(--font-inter)', 'sans-serif'], // Using Next.js font variable
+                sans: ['"Inter"', 'sans-serif'],
             },
             boxShadow: {
                 'clean': '0 1px 2px 0 rgb(0 0 0 / 0.05)',
@@ -33,4 +53,4 @@ module.exports = {
         },
     },
     plugins: [],
-};
+}
