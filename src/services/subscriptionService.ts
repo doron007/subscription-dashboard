@@ -1,4 +1,4 @@
-import type { Subscription } from '@/types';
+import type { Subscription, Transaction } from '@/types';
 
 export const subscriptionService = {
     getAll: async (): Promise<Subscription[]> => {
@@ -65,5 +65,19 @@ export const subscriptionService = {
         if (!response.ok) {
             throw new Error('Failed to delete subscription');
         }
+    },
+
+    addTransaction: async (transaction: Omit<Transaction, 'id'>): Promise<Transaction> => {
+        const response = await fetch('/api/transactions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(transaction),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to create transaction');
+        }
+
+        return response.json();
     }
 };

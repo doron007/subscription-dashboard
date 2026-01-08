@@ -5,6 +5,11 @@ export interface AnalyzedSubscription {
     last_transaction_date?: string;
     confidence: number;
     reasoning: string;
+    line_items?: {
+        description: string;
+        cost: number;
+        date?: string;
+    }[];
 }
 
 export const aiService = {

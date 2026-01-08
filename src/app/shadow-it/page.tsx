@@ -27,66 +27,102 @@ export default function ShadowItPage() {
         subscriptionService.getAll().then(setExistingSubscriptions).catch(console.error);
     });
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    const [isDragging, setIsDragging] = useState(false);
+
+    const onDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(true);
+    };
+
+    const onDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(false);
+    };
+
+    const onDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+            processFiles(Array.from(files));
+        }
+    };
+
+    const processFiles = async (files: File[]) => {
+        if (!files || files.length === 0) return;
 
         setAnalyzing(true);
         setResults([]);
 
+        const allImages: string[] = [];
+        let csvTransactions: any[] = [];
+        let hasPdf = false;
+        let hasCsv = false;
+
         try {
-            if (file.type === 'application/pdf') {
-                console.log('Processing PDF with Vision...');
-                try {
-                    const images = await convertPdfToImages(file);
-                    if (!images || images.length === 0) throw new Error("No images could be generated from PDF");
+            console.log(`Processing ${files.length} files...`);
 
-                    const candidates = await aiService.analyzeImages(images);
-                    setResults(candidates || []);
-                } catch (pdfError) {
-                    console.error("PDF Error:", pdfError);
-                    alert(`PDF Processing Failed: ${(pdfError as Error).message}`);
-                } finally {
-                    setAnalyzing(false);
-                }
-            } else {
-                // CSV Path
-                Papa.parse(file, {
-                    header: true,
-                    skipEmptyLines: true,
-                    complete: async (parseResults) => {
-                        console.log('CSV Parsed:', parseResults);
-                        if (!parseResults.data || parseResults.data.length === 0) {
-                            alert('CSV file appears empty or invalid.');
-                            setAnalyzing(false);
-                            return;
+            for (const file of files) {
+                if (file.type === 'application/pdf') {
+                    hasPdf = true;
+                    try {
+                        const images = await convertPdfToImages(file);
+                        if (images && images.length > 0) {
+                            allImages.push(...images);
                         }
-
-                        try {
-                            const transactions = parseResults.data;
-                            const candidates = await aiService.analyze(transactions);
-                            if (!candidates || candidates.length === 0) {
-                                alert('No subscriptions detected in this file.');
-                            }
-                            setResults(candidates || []);
-                        } catch (error) {
-                            console.error('Analysis error:', error);
-                            alert(`Analysis failed: ${(error as Error).message}`);
-                        } finally {
-                            setAnalyzing(false);
-                        }
-                    },
-                    error: () => {
-                        alert('Failed to parse CSV');
-                        setAnalyzing(false);
+                    } catch (pdfError) {
+                        console.error(`PDF Error for ${file.name}:`, pdfError);
+                        // Continue to next file
                     }
-                });
+                } else if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
+                    hasCsv = true;
+                    // For CSV, we need to wrap Papa.parse in a promise
+                    try {
+                        const parsedData = await new Promise<any[]>((resolve, reject) => {
+                            Papa.parse(file, {
+                                header: true,
+                                skipEmptyLines: true,
+                                complete: (results) => resolve(results.data),
+                                error: (err) => reject(err)
+                            });
+                        });
+                        if (parsedData && parsedData.length > 0) {
+                            csvTransactions.push(...parsedData);
+                        }
+                    } catch (csvError) {
+                        console.error(`CSV Error for ${file.name}:`, csvError);
+                    }
+                }
             }
+
+            // Analyze collected data
+            if (hasPdf && allImages.length > 0) {
+                console.log(`Sending ${allImages.length} images to AI...`);
+                // If we also have CSV data, we might want to send it too, but AI service currently splits paths.
+                // For now, prioritize Vision if images exist.
+                const candidates = await aiService.analyzeImages(allImages);
+                setResults(candidates || []);
+            } else if (hasCsv && csvTransactions.length > 0) {
+                console.log(`Sending ${csvTransactions.length} transactions to AI...`);
+                const candidates = await aiService.analyze(csvTransactions);
+                setResults(candidates || []);
+            } else {
+                if (hasPdf || hasCsv) {
+                    alert('Could not extract valid data from the provided files.');
+                }
+            }
+
         } catch (error) {
             console.error('Processing error:', error);
-            alert(`Failed to process file: ${(error as Error).message}`);
+            alert(`Failed to process files: ${(error as Error).message}`);
+        } finally {
             setAnalyzing(false);
         }
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (files && files.length > 0) processFiles(Array.from(files));
     };
 
     const handleAdd = async (sub: AnalyzedSubscription, index: number) => {
@@ -103,7 +139,7 @@ export default function ShadowItPage() {
     const performAdd = async (sub: AnalyzedSubscription, index: number) => {
         setAddingIds(prev => new Set(prev).add(index));
         try {
-            await subscriptionService.create({
+            const newSubscription = await subscriptionService.create({
                 name: sub.name,
                 category: sub.category,
                 cost: sub.cost,
@@ -115,13 +151,32 @@ export default function ShadowItPage() {
                 owner: { name: 'Unknown', email: 'admin@company.com' } // placeholder
             });
 
-            // Remove from list or mark done? Let's mark done visually
-            // Actually, let's just alert for now or show toast. 
-            // Better yet, remove from results list to show progress
+            // Add detected transactions
+            if (sub.line_items && sub.line_items.length > 0) {
+                for (const item of sub.line_items) {
+                    await subscriptionService.addTransaction({
+                        subscriptionId: newSubscription.id,
+                        date: item.date || sub.last_transaction_date || new Date().toISOString().split('T')[0],
+                        amount: item.cost,
+                        currency: 'USD',
+                        status: 'Posted',
+                        description: item.description || `Initial scan via Shadow IT`
+                    });
+                }
+            }
+
+            // Remove from results list to show progress
             setResults(prev => prev.filter((_, i) => i !== index));
             router.refresh(); // Update sidebar counts if any
         } catch (error) {
+            console.error(error);
             alert('Failed to add subscription');
+        } finally {
+            setAddingIds(prev => {
+                const next = new Set(prev);
+                next.delete(index);
+                return next;
+            });
         }
     };
 
@@ -137,6 +192,20 @@ export default function ShadowItPage() {
                 // Update other fields if needed, e.g. status
                 status: 'Active'
             });
+
+            // Add detected transactions from Update
+            if (newSub.line_items && newSub.line_items.length > 0) {
+                for (const item of newSub.line_items) {
+                    await subscriptionService.addTransaction({
+                        subscriptionId: existing.id,
+                        date: item.date || newSub.last_transaction_date || new Date().toISOString().split('T')[0],
+                        amount: item.cost,
+                        currency: 'USD',
+                        status: 'Posted',
+                        description: item.description || `Updated via Shadow IT`
+                    });
+                }
+            }
 
             // Refresh local list
             const updatedList = existingSubscriptions.map(s => s.id === existing.id ? { ...s, cost: newSub.cost } : s);
@@ -177,10 +246,17 @@ export default function ShadowItPage() {
 
                 {/* Upload Area */}
                 {results.length === 0 && (
-                    <div className="border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center hover:border-purple-500 hover:bg-purple-50/50 transition-all cursor-pointer group"
+                    <div
+                        className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all cursor-pointer group ${isDragging
+                            ? 'border-purple-600 bg-purple-100 scale-[1.02]'
+                            : 'border-slate-300 hover:border-purple-500 hover:bg-purple-50/50'
+                            }`}
                         onClick={() => fileInputRef.current?.click()}
+                        onDragOver={onDragOver}
+                        onDragLeave={onDragLeave}
+                        onDrop={onDrop}
                     >
-                        <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv,.pdf" />
+                        <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv,.pdf" multiple />
 
                         {analyzing ? (
                             <div className="flex flex-col items-center">
@@ -190,12 +266,15 @@ export default function ShadowItPage() {
                             </div>
                         ) : (
                             <div className="flex flex-col items-center">
-                                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                                    <Upload className="w-8 h-8 text-purple-600" />
+                                <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 transition-transform ${isDragging ? 'bg-purple-200 scale-110' : 'bg-purple-100 group-hover:scale-110'
+                                    }`}>
+                                    <Upload className={`w-8 h-8 ${isDragging ? 'text-purple-700' : 'text-purple-600'}`} />
                                 </div>
-                                <h3 className="text-xl font-bold text-slate-900 mb-2">Upload Bank Statement (CSV or PDF)</h3>
+                                <h3 className="text-xl font-bold text-slate-900 mb-2">
+                                    {isDragging ? 'Drop file to analyze' : 'Upload Bank Statement (CSV or PDF)'}
+                                </h3>
                                 <p className="text-slate-500 max-w-sm mx-auto">
-                                    Drag and drop or click to select a file. We'll analyze transaction descriptions to find recurring software costs.
+                                    Drag and drop or click to select files. We'll analyze transaction descriptions to find recurring software costs.
                                 </p>
                             </div>
                         )}
@@ -233,6 +312,25 @@ export default function ShadowItPage() {
                                             <p className="text-slate-500 text-xs mt-2 italic bg-slate-50 inline-block px-2 py-1 rounded">
                                                 AI Reasoning: "{sub.reasoning}"
                                             </p>
+
+                                            {/* Line Items Display */}
+                                            {sub.line_items && sub.line_items.length > 0 && (
+                                                <div className="mt-3">
+                                                    <details className="group/details">
+                                                        <summary className="text-xs font-medium text-purple-600 cursor-pointer hover:text-purple-700 flex items-center gap-1 select-none">
+                                                            View {sub.line_items.length} Consolidated Items
+                                                        </summary>
+                                                        <div className="mt-2 pl-2 border-l-2 border-slate-100 space-y-1">
+                                                            {sub.line_items.map((item, liIdx) => (
+                                                                <div key={liIdx} className="text-xs text-slate-600 flex justify-between gap-4">
+                                                                    <span className="truncate max-w-[200px]">{item.description}</span>
+                                                                    <span className="font-medium text-slate-900">${item.cost}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </details>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 

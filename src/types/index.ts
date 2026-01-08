@@ -69,3 +69,14 @@ export interface Assignment {
     deviceId?: string;
     assignedDate: string;
 }
+
+export interface Transaction {
+    id: string;
+    subscriptionId: string;
+    date: string; // ISO Date YYYY-MM-DD
+    amount: number;
+    currency: string;
+    status: 'Posted' | 'Pending';
+    description: string;
+    invoiceUrl?: string;
+}

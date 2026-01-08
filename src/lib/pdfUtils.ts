@@ -1,10 +1,14 @@
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Set worker source
-// valid for nextjs public folder or CDN
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 export async function convertPdfToImages(file: File, maxPages = 3): Promise<string[]> {
+    // Dynamic import to avoid build issues with server-side rendering
+    const pdfjsLib = await import('pdfjs-dist');
+
+    // Set worker source
+    // Ensure we use the version from the imported module
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 

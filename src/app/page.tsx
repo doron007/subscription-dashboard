@@ -30,10 +30,23 @@ export default function Dashboard() {
   }, []);
 
   // Calculate summary metrics
-  const totalSpend = subscriptions.reduce((acc, sub) => acc + sub.cost, 0);
+  const totalAnnualSpend = subscriptions.reduce((acc, sub) => {
+    if (sub.status === 'Cancelled') return acc;
+    const annualCost = sub.billingCycle === 'Monthly' ? sub.cost * 12 : sub.cost;
+    return acc + annualCost;
+  }, 0);
+
   const activeSubs = subscriptions.filter(s => s.status === 'Active').length;
   const reviewSubs = subscriptions.filter(s => s.status === 'Review').length;
-  const upcomingRenewals = 3; // Mock logic, consistent with previous App
+
+  const upcomingRenewals = subscriptions.filter(sub => {
+    if (!sub.renewalDate || sub.status === 'Cancelled') return false;
+    const today = new Date();
+    const renewal = new Date(sub.renewalDate);
+    const diffTime = renewal.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays >= 0 && diffDays <= 30;
+  }).length;
 
   if (loading) {
     return (
@@ -59,14 +72,14 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatsCard
             label="Total Annual Spend"
-            value={new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(totalSpend)}
-            trend={{ value: 12, isPositive: false }}
+            value={new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(totalAnnualSpend)}
+            // trend={{ value: 0, isPositive: true }} // TODO: Implement historical tracking
             icon={DollarSign}
           />
           <StatsCard
             label="Active Subscriptions"
             value={activeSubs.toString()}
-            trend={{ value: 2, isPositive: true }}
+            // trend={{ value: 0, isPositive: true }}
             icon={Layers}
           />
           <StatsCard
