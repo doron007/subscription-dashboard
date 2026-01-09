@@ -1,21 +1,14 @@
-import { RawInvoice, AggregatedSubscription } from './types';
+import { RawInvoice, AnalyzedInvoice, AnalyzedLineItem } from './types';
 
 /**
- * Removes date patterns from a string to allow grouping.
- * e.g. "Microsoft 365 E3 (Jan 01 - Jan 31)" -> "Microsoft 365 E3"
+ * Removes date patterns from a string.
  */
 export function stripDateFromText(text: string): string {
     if (!text) return "";
-
-    // Common Date Patterns
     const patterns = [
-        // MM/DD/YYYY - MM/DD/YYYY (with optional parens)
         /\(?\d{1,2}\/\d{1,2}\/\d{2,4}\s*-\s*\d{1,2}\/\d{1,2}\/\d{2,4}\)?/g,
-        // YYYY-MM-DD
         /\d{4}-\d{1,2}-\d{1,2}/g,
-        // Short Month Names with Year (Jan 2024)
         /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}/gi,
-        // Just the date range usually found in invoices: "Service period: ..."
         /Service Period:?.*/i
     ];
 
@@ -23,48 +16,56 @@ export function stripDateFromText(text: string): string {
     for (const p of patterns) {
         cleaned = cleaned.replace(p, '');
     }
-
-    // Remove empty parens "()" if they were left behind
     cleaned = cleaned.replace(/\(\s*\)/g, '');
-
-    // Trim whitespace and trailing punctuation
     return cleaned.replace(/\s+/g, ' ').trim().replace(/[-:]$/, '');
 }
 
 /**
- * The Brain: Converts a Raw Invoice (dumb list) into a Single Subscription (smart grouping).
+ * Validates and aggregates the Raw Invoice into a structured Analyzed Invoice.
  */
-export function aggregateInvoice(raw: RawInvoice): AggregatedSubscription {
-    const groupedItems: Record<string, { cost: number; originalDate: string }> = {};
+export function aggregateInvoice(raw: RawInvoice): AnalyzedInvoice {
+    const analyzedLines: AnalyzedLineItem[] = [];
 
-    // 1. Group Line Items
     for (const item of raw.line_items) {
-        const cleanName = stripDateFromText(item.description);
+        // Strip dates to find the "Canon" service name
+        const serviceName = stripDateFromText(item.description);
 
-        if (!groupedItems[cleanName]) {
-            groupedItems[cleanName] = { cost: 0, originalDate: raw.invoice_date || new Date().toISOString() };
-        }
+        // Attempt to extract dates if they exist in the raw description for "Period" fields
+        // (Simple heuristic for now, can be improved with NLP later)
+        let periodStart: string | undefined;
+        let periodEnd: string | undefined;
 
-        // Sum the costs
-        groupedItems[cleanName].cost += item.total;
+        analyzedLines.push({
+            description: item.description, // Keep original description for Reference
+            service_name: serviceName,     // The "Catalog" name
+            quantity: item.quantity || 1,
+            unit_price: item.unit_price || item.total, // Fallback if missing
+            total_amount: item.total,
+            period_start: periodStart,
+            period_end: periodEnd
+        });
     }
 
-    // 2. Convert back to array
-    const consolidatedLineItems = Object.entries(groupedItems).map(([desc, data]) => ({
-        description: desc,
-        cost: Number(data.cost.toFixed(2)),
-        date: data.originalDate
-    }));
+    // Sort by largest cost first
+    analyzedLines.sort((a, b) => b.total_amount - a.total_amount);
 
-    // 3. Create the Subscription Object
-    // We enforce the "One Invoice = One Subscription" rule here.
     return {
-        name: raw.vendor_name || "Unknown Vendor",
-        category: "Software", // Placeholder, could be enhanced with categorization logic later
-        cost: Number(raw.total_amount.toFixed(2)),
-        last_transaction_date: raw.invoice_date || new Date().toISOString().split('T')[0],
-        confidence: raw.confidence_score,
-        reasoning: `Consolidated ${raw.line_items.length} raw lines into ${consolidatedLineItems.length} unique items.`,
-        line_items: consolidatedLineItems
+        vendor: {
+            name: raw.vendor_name || "Unknown Vendor",
+            website: "" // TODO: Could extract from email or metadata later
+        },
+        invoice: {
+            // Generate stable invoice number if missing (for idempotency)
+            // Use hash of vendor+date+total so re-imports match the same invoice
+            number: raw.invoice_number || `INV-${raw.vendor_name?.slice(0, 10) || 'UNK'}-${(raw.invoice_date || '').replace(/\D/g, '')}-${Math.round(raw.total_amount)}`,
+            date: raw.invoice_date || new Date().toISOString().split('T')[0],
+            total_amount: raw.total_amount,
+            currency: raw.currency || 'USD'
+        },
+        line_items: analyzedLines,
+        summary: {
+            total_lines: analyzedLines.length,
+            confidence_score: raw.confidence_score
+        }
     };
 }

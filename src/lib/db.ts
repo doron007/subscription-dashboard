@@ -1,12 +1,824 @@
 import { supabase } from './supabase';
-import type { Subscription, SubscriptionStatus, BillingCycle, PaymentMethod, Employee, Device, Assignment } from '../types';
+import type { Subscription, SubscriptionStatus, BillingCycle, PaymentMethod, Employee, Device, Assignment, Vendor, SubscriptionService, Invoice, InvoiceLineItem } from '../types';
 
 export const db = {
+    // --- Phase 6: New Entities ---
+
+    vendors: {
+        findByName: async (name: string): Promise<Vendor | null> => {
+            const { data, error } = await supabase
+                .from('sub_vendors')
+                .select('*')
+                .ilike('name', name)
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                name: data.name,
+                website: data.website,
+                contactEmail: data.contact_email,
+                logoUrl: data.logo_url
+            };
+        },
+
+        create: async (vendor: Partial<Vendor>): Promise<Vendor> => {
+            const { data, error } = await supabase
+                .from('sub_vendors')
+                .insert({
+                    name: vendor.name,
+                    website: vendor.website,
+                    contact_email: vendor.contactEmail,
+                    logo_url: vendor.logoUrl
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+            return {
+                id: data.id,
+                name: data.name,
+                website: data.website,
+                contactEmail: data.contact_email,
+                logoUrl: data.logo_url
+            };
+        },
+
+        findAll: async (): Promise<(Vendor & { subscriptionCount: number; invoiceCount: number; totalSpend: number })[]> => {
+            // Fetch vendors
+            const { data: vendorData, error: vendorError } = await supabase
+                .from('sub_vendors')
+                .select('*')
+                .order('name', { ascending: true });
+
+            if (vendorError) {
+                console.error('Error fetching vendors:', vendorError);
+                return [];
+            }
+
+            // For each vendor, get counts and spend
+            const vendorsWithStats = await Promise.all((vendorData || []).map(async (row: any) => {
+                // Get subscription count
+                const { count: subCount } = await supabase
+                    .from('sub_subscriptions')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('vendor_id', row.id);
+
+                // Get invoices with amounts
+                const { data: invoices } = await supabase
+                    .from('sub_invoices')
+                    .select('total_amount')
+                    .eq('vendor_id', row.id);
+
+                const invoiceCount = invoices?.length || 0;
+                const totalSpend = (invoices || []).reduce((sum: number, inv: any) =>
+                    sum + (parseFloat(inv.total_amount) || 0), 0);
+
+                return {
+                    id: row.id,
+                    name: row.name,
+                    website: row.website,
+                    contactEmail: row.contact_email,
+                    logoUrl: row.logo_url,
+                    subscriptionCount: subCount || 0,
+                    invoiceCount,
+                    totalSpend
+                };
+            }));
+
+            return vendorsWithStats;
+        },
+
+        findById: async (id: string): Promise<Vendor | null> => {
+            const { data, error } = await supabase
+                .from('sub_vendors')
+                .select('*')
+                .eq('id', id)
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                name: data.name,
+                website: data.website,
+                contactEmail: data.contact_email,
+                logoUrl: data.logo_url
+            };
+        },
+
+        update: async (id: string, vendor: Partial<Vendor>): Promise<Vendor | null> => {
+            const { data, error } = await supabase
+                .from('sub_vendors')
+                .update({
+                    name: vendor.name,
+                    website: vendor.website,
+                    contact_email: vendor.contactEmail,
+                    logo_url: vendor.logoUrl,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', id)
+                .select()
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                name: data.name,
+                website: data.website,
+                contactEmail: data.contact_email,
+                logoUrl: data.logo_url
+            };
+        },
+
+        // Cascade delete: removes all subscriptions, services, invoices, line items
+        delete: async (id: string): Promise<{ success: boolean; deletedCounts: { subscriptions: number; services: number; invoices: number; lineItems: number } }> => {
+            // Get all subscriptions for this vendor to cascade delete
+            const { data: subscriptions } = await supabase
+                .from('sub_subscriptions')
+                .select('id')
+                .eq('vendor_id', id);
+
+            const subIds = subscriptions?.map(s => s.id) || [];
+            let deletedServices = 0;
+            let deletedInvoices = 0;
+            let deletedLineItems = 0;
+
+            if (subIds.length > 0) {
+                // Delete line items first (via invoices)
+                const { data: invoices } = await supabase
+                    .from('sub_invoices')
+                    .select('id')
+                    .in('subscription_id', subIds);
+
+                const invoiceIds = invoices?.map(i => i.id) || [];
+                if (invoiceIds.length > 0) {
+                    // Count first, then delete
+                    const { count: liCount } = await supabase
+                        .from('sub_invoice_line_items')
+                        .select('*', { count: 'exact', head: true })
+                        .in('invoice_id', invoiceIds);
+                    deletedLineItems = liCount || 0;
+
+                    await supabase
+                        .from('sub_invoice_line_items')
+                        .delete()
+                        .in('invoice_id', invoiceIds);
+                }
+
+                // Count then delete invoices
+                const { count: invCount } = await supabase
+                    .from('sub_invoices')
+                    .select('*', { count: 'exact', head: true })
+                    .in('subscription_id', subIds);
+                deletedInvoices = invCount || 0;
+
+                await supabase
+                    .from('sub_invoices')
+                    .delete()
+                    .in('subscription_id', subIds);
+
+                // Count then delete services
+                const { count: svcCount } = await supabase
+                    .from('sub_subscription_services')
+                    .select('*', { count: 'exact', head: true })
+                    .in('subscription_id', subIds);
+                deletedServices = svcCount || 0;
+
+                await supabase
+                    .from('sub_subscription_services')
+                    .delete()
+                    .in('subscription_id', subIds);
+
+                // Delete assignments
+                await supabase
+                    .from('sub_assignments')
+                    .delete()
+                    .in('subscription_id', subIds);
+
+                // Delete subscriptions
+                await supabase
+                    .from('sub_subscriptions')
+                    .delete()
+                    .in('id', subIds);
+            }
+
+            // Finally delete the vendor
+            const { error } = await supabase
+                .from('sub_vendors')
+                .delete()
+                .eq('id', id);
+
+            return {
+                success: !error,
+                deletedCounts: {
+                    subscriptions: subIds.length,
+                    services: deletedServices,
+                    invoices: deletedInvoices,
+                    lineItems: deletedLineItems
+                }
+            };
+        },
+
+        // Get cascade impact before delete (for UI warning)
+        getCascadeImpact: async (id: string): Promise<{ subscriptions: number; services: number; invoices: number; lineItems: number }> => {
+            const { data: subscriptions } = await supabase
+                .from('sub_subscriptions')
+                .select('id')
+                .eq('vendor_id', id);
+
+            const subIds = subscriptions?.map(s => s.id) || [];
+            let services = 0;
+            let invoices = 0;
+            let lineItems = 0;
+
+            if (subIds.length > 0) {
+                const { count: svcCount } = await supabase
+                    .from('sub_subscription_services')
+                    .select('*', { count: 'exact', head: true })
+                    .in('subscription_id', subIds);
+                services = svcCount || 0;
+
+                const { data: invData, count: invCount } = await supabase
+                    .from('sub_invoices')
+                    .select('id', { count: 'exact' })
+                    .in('subscription_id', subIds);
+                invoices = invCount || 0;
+
+                const invoiceIds = invData?.map(i => i.id) || [];
+                if (invoiceIds.length > 0) {
+                    const { count: liCount } = await supabase
+                        .from('sub_invoice_line_items')
+                        .select('*', { count: 'exact', head: true })
+                        .in('invoice_id', invoiceIds);
+                    lineItems = liCount || 0;
+                }
+            }
+
+            return { subscriptions: subIds.length, services, invoices, lineItems };
+        }
+    },
+
+    services: {
+        findBySubscription: async (subId: string): Promise<SubscriptionService[]> => {
+            const { data, error } = await supabase
+                .from('sub_subscription_services')
+                .select('*')
+                .eq('subscription_id', subId);
+
+            if (error) return [];
+            return data.map((row: any) => ({
+                id: row.id,
+                subscriptionId: row.subscription_id,
+                name: row.name,
+                category: row.category,
+                status: row.status,
+                currentQuantity: row.current_quantity,
+                currentUnitPrice: row.current_unit_price,
+                currency: row.currency
+            }));
+        },
+
+        upsert: async (service: Partial<SubscriptionService>, invoiceDate?: Date): Promise<SubscriptionService> => {
+            // Find-or-Create pattern since we don't have a unique constraint on (subscription_id, name)
+            const { data: existing } = await supabase
+                .from('sub_subscription_services')
+                .select('*')
+                .eq('subscription_id', service.subscriptionId)
+                .eq('name', service.name)
+                .maybeSingle();
+
+            if (existing) {
+                // Only update if this invoice is more recent than the service's last update
+                const existingUpdatedAt = existing.updated_at ? new Date(existing.updated_at) : new Date(0);
+                const shouldUpdate = !invoiceDate || invoiceDate >= existingUpdatedAt;
+
+                if (shouldUpdate) {
+                    const { data, error } = await supabase
+                        .from('sub_subscription_services')
+                        .update({
+                            current_quantity: service.currentQuantity,
+                            current_unit_price: service.currentUnitPrice,
+                            currency: service.currency,
+                            // Use invoice date as the updated_at to track which invoice the data came from
+                            updated_at: invoiceDate ? invoiceDate.toISOString() : new Date().toISOString()
+                        })
+                        .eq('id', existing.id)
+                        .select()
+                        .single();
+
+                    if (error) throw error;
+                    return {
+                        id: data.id,
+                        subscriptionId: data.subscription_id,
+                        name: data.name,
+                        category: data.category,
+                        status: data.status,
+                        currentQuantity: data.current_quantity,
+                        currentUnitPrice: data.current_unit_price,
+                        currency: data.currency
+                    };
+                } else {
+                    // Return existing without updating (invoice is older)
+                    console.log(`[Services] Skipping update for ${service.name} - invoice date ${invoiceDate} is older than existing ${existingUpdatedAt}`);
+                    return {
+                        id: existing.id,
+                        subscriptionId: existing.subscription_id,
+                        name: existing.name,
+                        category: existing.category,
+                        status: existing.status,
+                        currentQuantity: existing.current_quantity,
+                        currentUnitPrice: existing.current_unit_price,
+                        currency: existing.currency
+                    };
+                }
+            }
+
+            // Create new service
+            const { data, error } = await supabase
+                .from('sub_subscription_services')
+                .insert({
+                    subscription_id: service.subscriptionId,
+                    name: service.name,
+                    category: service.category,
+                    status: service.status || 'Active',
+                    current_quantity: service.currentQuantity,
+                    current_unit_price: service.currentUnitPrice,
+                    currency: service.currency,
+                    // Set updated_at to invoice date so we can compare later
+                    updated_at: invoiceDate ? invoiceDate.toISOString() : new Date().toISOString()
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+            return {
+                id: data.id,
+                subscriptionId: data.subscription_id,
+                name: data.name,
+                category: data.category,
+                status: data.status,
+                currentQuantity: data.current_quantity,
+                currentUnitPrice: data.current_unit_price,
+                currency: data.currency
+            };
+        },
+
+        findById: async (id: string): Promise<SubscriptionService | null> => {
+            const { data, error } = await supabase
+                .from('sub_subscription_services')
+                .select('*')
+                .eq('id', id)
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                subscriptionId: data.subscription_id,
+                name: data.name,
+                category: data.category,
+                status: data.status,
+                currentQuantity: data.current_quantity,
+                currentUnitPrice: data.current_unit_price,
+                currency: data.currency
+            };
+        },
+
+        update: async (id: string, service: Partial<SubscriptionService>): Promise<SubscriptionService | null> => {
+            const { data, error } = await supabase
+                .from('sub_subscription_services')
+                .update({
+                    name: service.name,
+                    category: service.category,
+                    status: service.status,
+                    current_quantity: service.currentQuantity,
+                    current_unit_price: service.currentUnitPrice,
+                    currency: service.currency,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', id)
+                .select()
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                subscriptionId: data.subscription_id,
+                name: data.name,
+                category: data.category,
+                status: data.status,
+                currentQuantity: data.current_quantity,
+                currentUnitPrice: data.current_unit_price,
+                currency: data.currency
+            };
+        },
+
+        // Cascade delete: removes related line items
+        delete: async (id: string): Promise<{ success: boolean; deletedLineItems: number }> => {
+            // Count line items first
+            const { data: lineItems } = await supabase
+                .from('sub_invoice_line_items')
+                .select('id')
+                .eq('service_id', id);
+
+            const deletedLineItems = lineItems?.length || 0;
+
+            // Delete line items
+            if (deletedLineItems > 0) {
+                await supabase
+                    .from('sub_invoice_line_items')
+                    .delete()
+                    .eq('service_id', id);
+            }
+
+            // Delete the service
+            const { error } = await supabase
+                .from('sub_subscription_services')
+                .delete()
+                .eq('id', id);
+
+            return { success: !error, deletedLineItems };
+        },
+
+        getCascadeImpact: async (id: string): Promise<{ lineItems: number }> => {
+            const { data } = await supabase
+                .from('sub_invoice_line_items')
+                .select('id')
+                .eq('service_id', id);
+
+            return { lineItems: data?.length || 0 };
+        }
+    },
+
+    invoices: {
+        create: async (invoice: Partial<Invoice>): Promise<Invoice> => {
+            const { data, error } = await supabase
+                .from('sub_invoices')
+                .insert({
+                    vendor_id: invoice.vendorId,
+                    subscription_id: invoice.subscriptionId,
+                    invoice_number: invoice.invoiceNumber,
+                    invoice_date: invoice.invoiceDate,
+                    due_date: invoice.dueDate,
+                    total_amount: invoice.totalAmount,
+                    currency: invoice.currency || 'USD',
+                    status: invoice.status || 'Pending',
+                    file_url: invoice.fileUrl
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+            return {
+                id: data.id,
+                vendorId: data.vendor_id,
+                subscriptionId: data.subscription_id,
+                invoiceNumber: data.invoice_number,
+                invoiceDate: data.invoice_date,
+                dueDate: data.due_date,
+                totalAmount: data.total_amount,
+                currency: data.currency,
+                status: data.status,
+                fileUrl: data.file_url
+            };
+        },
+
+        addLineItems: async (items: Partial<InvoiceLineItem>[]): Promise<void> => {
+            const dbItems = items.map(item => ({
+                invoice_id: item.invoiceId,
+                service_id: item.serviceId,
+                description: item.description,
+                quantity: item.quantity,
+                unit_price: item.unitPrice,
+                total_amount: item.totalAmount,
+                period_start: item.periodStart,
+                period_end: item.periodEnd
+            }));
+
+            const { error } = await supabase
+                .from('sub_invoice_line_items')
+                .insert(dbItems);
+
+            if (error) throw error;
+        },
+
+        // Find invoice by invoice number (for idempotency check)
+        findByNumber: async (invoiceNumber: string): Promise<Invoice | null> => {
+            const { data, error } = await supabase
+                .from('sub_invoices')
+                .select('*')
+                .eq('invoice_number', invoiceNumber)
+                .maybeSingle();
+
+            if (error) {
+                console.error('Error finding invoice by number:', error);
+                return null;
+            }
+            if (!data) return null;
+
+            return {
+                id: data.id,
+                vendorId: data.vendor_id,
+                subscriptionId: data.subscription_id,
+                invoiceNumber: data.invoice_number,
+                invoiceDate: data.invoice_date,
+                dueDate: data.due_date,
+                totalAmount: data.total_amount,
+                currency: data.currency,
+                status: data.status,
+                fileUrl: data.file_url
+            };
+        },
+
+        // Delete line items for an invoice (for re-processing)
+        deleteLineItems: async (invoiceId: string): Promise<void> => {
+            const { error } = await supabase
+                .from('sub_invoice_line_items')
+                .delete()
+                .eq('invoice_id', invoiceId);
+
+            if (error) throw error;
+        },
+
+        // Update existing invoice
+        update: async (id: string, invoice: Partial<Invoice>): Promise<Invoice> => {
+            const { data, error } = await supabase
+                .from('sub_invoices')
+                .update({
+                    invoice_date: invoice.invoiceDate,
+                    total_amount: invoice.totalAmount,
+                    currency: invoice.currency,
+                    status: invoice.status,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', id)
+                .select()
+                .single();
+
+            if (error) throw error;
+            return {
+                id: data.id,
+                vendorId: data.vendor_id,
+                subscriptionId: data.subscription_id,
+                invoiceNumber: data.invoice_number,
+                invoiceDate: data.invoice_date,
+                dueDate: data.due_date,
+                totalAmount: data.total_amount,
+                currency: data.currency,
+                status: data.status,
+                fileUrl: data.file_url
+            };
+        },
+
+        findAll: async (): Promise<Invoice[]> => {
+            const { data, error } = await supabase
+                .from('sub_invoices')
+                .select(`
+                    *,
+                    vendor:sub_vendors(name)
+                `)
+                .order('invoice_date', { ascending: false });
+
+            if (error) {
+                console.error('Error fetching invoices:', error);
+                return [];
+            }
+
+            return (data || []).map((row: any) => ({
+                id: row.id,
+                vendorId: row.vendor_id,
+                subscriptionId: row.subscription_id,
+                invoiceNumber: row.invoice_number,
+                invoiceDate: row.invoice_date,
+                dueDate: row.due_date,
+                totalAmount: parseFloat(row.total_amount) || 0,
+                currency: row.currency,
+                status: row.status,
+                fileUrl: row.file_url,
+                vendorName: row.vendor?.name
+            }));
+        },
+
+        findBySubscription: async (subscriptionId: string): Promise<Invoice[]> => {
+            const { data, error } = await supabase
+                .from('sub_invoices')
+                .select('*')
+                .eq('subscription_id', subscriptionId)
+                .order('invoice_date', { ascending: false });
+
+            if (error) {
+                console.error('Error fetching invoices by subscription:', error);
+                return [];
+            }
+
+            return (data || []).map((row: any) => ({
+                id: row.id,
+                vendorId: row.vendor_id,
+                subscriptionId: row.subscription_id,
+                invoiceNumber: row.invoice_number,
+                invoiceDate: row.invoice_date,
+                dueDate: row.due_date,
+                totalAmount: parseFloat(row.total_amount) || 0,
+                currency: row.currency,
+                status: row.status,
+                fileUrl: row.file_url
+            }));
+        },
+
+        findByVendor: async (vendorId: string): Promise<Invoice[]> => {
+            const { data, error } = await supabase
+                .from('sub_invoices')
+                .select('*')
+                .eq('vendor_id', vendorId)
+                .order('invoice_date', { ascending: false });
+
+            if (error) {
+                console.error('Error fetching invoices by vendor:', error);
+                return [];
+            }
+
+            return (data || []).map((row: any) => ({
+                id: row.id,
+                vendorId: row.vendor_id,
+                subscriptionId: row.subscription_id,
+                invoiceNumber: row.invoice_number,
+                invoiceDate: row.invoice_date,
+                dueDate: row.due_date,
+                totalAmount: parseFloat(row.total_amount) || 0,
+                currency: row.currency,
+                status: row.status,
+                fileUrl: row.file_url
+            }));
+        },
+
+        getLineItems: async (invoiceId: string): Promise<InvoiceLineItem[]> => {
+            const { data, error } = await supabase
+                .from('sub_invoice_line_items')
+                .select(`
+                    *,
+                    service:sub_subscription_services(name)
+                `)
+                .eq('invoice_id', invoiceId)
+                .order('created_at', { ascending: true });
+
+            if (error) {
+                console.error('Error fetching line items:', error);
+                return [];
+            }
+
+            return (data || []).map((row: any) => ({
+                id: row.id,
+                invoiceId: row.invoice_id,
+                serviceId: row.service_id,
+                description: row.description,
+                quantity: parseFloat(row.quantity) || 0,
+                unitPrice: parseFloat(row.unit_price) || 0,
+                totalAmount: parseFloat(row.total_amount) || 0,
+                periodStart: row.period_start,
+                periodEnd: row.period_end,
+                serviceName: row.service?.name
+            }));
+        },
+
+        getAllLineItemsBySubscription: async (subscriptionId: string): Promise<(InvoiceLineItem & { invoiceNumber?: string; invoiceDate?: string })[]> => {
+            const { data, error } = await supabase
+                .from('sub_invoice_line_items')
+                .select(`
+                    *,
+                    service:sub_subscription_services(name),
+                    invoice:sub_invoices!inner(invoice_number, invoice_date, subscription_id)
+                `)
+                .eq('invoice.subscription_id', subscriptionId)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('Error fetching all line items by subscription:', error);
+                return [];
+            }
+
+            return (data || []).map((row: any) => ({
+                id: row.id,
+                invoiceId: row.invoice_id,
+                serviceId: row.service_id,
+                description: row.description,
+                quantity: parseFloat(row.quantity) || 0,
+                unitPrice: parseFloat(row.unit_price) || 0,
+                totalAmount: parseFloat(row.total_amount) || 0,
+                periodStart: row.period_start,
+                periodEnd: row.period_end,
+                serviceName: row.service?.name,
+                invoiceNumber: row.invoice?.invoice_number,
+                invoiceDate: row.invoice?.invoice_date
+            }));
+        }
+    },
+
+    // --- Line Items CRUD ---
+    lineItems: {
+        findById: async (id: string): Promise<InvoiceLineItem | null> => {
+            const { data, error } = await supabase
+                .from('sub_invoice_line_items')
+                .select(`
+                    *,
+                    service:sub_subscription_services(name),
+                    invoice:sub_invoices(invoice_number, invoice_date)
+                `)
+                .eq('id', id)
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                invoiceId: data.invoice_id,
+                serviceId: data.service_id,
+                description: data.description,
+                quantity: parseFloat(data.quantity) || 0,
+                unitPrice: parseFloat(data.unit_price) || 0,
+                totalAmount: parseFloat(data.total_amount) || 0,
+                periodStart: data.period_start,
+                periodEnd: data.period_end
+            };
+        },
+
+        create: async (item: Partial<InvoiceLineItem>): Promise<InvoiceLineItem | null> => {
+            const { data, error } = await supabase
+                .from('sub_invoice_line_items')
+                .insert({
+                    invoice_id: item.invoiceId,
+                    service_id: item.serviceId,
+                    description: item.description,
+                    quantity: item.quantity,
+                    unit_price: item.unitPrice,
+                    total_amount: item.totalAmount,
+                    period_start: item.periodStart,
+                    period_end: item.periodEnd
+                })
+                .select()
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                invoiceId: data.invoice_id,
+                serviceId: data.service_id,
+                description: data.description,
+                quantity: parseFloat(data.quantity) || 0,
+                unitPrice: parseFloat(data.unit_price) || 0,
+                totalAmount: parseFloat(data.total_amount) || 0,
+                periodStart: data.period_start,
+                periodEnd: data.period_end
+            };
+        },
+
+        update: async (id: string, item: Partial<InvoiceLineItem>): Promise<InvoiceLineItem | null> => {
+            const { data, error } = await supabase
+                .from('sub_invoice_line_items')
+                .update({
+                    description: item.description,
+                    quantity: item.quantity,
+                    unit_price: item.unitPrice,
+                    total_amount: item.totalAmount,
+                    period_start: item.periodStart,
+                    period_end: item.periodEnd,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', id)
+                .select()
+                .single();
+
+            if (error) return null;
+            return {
+                id: data.id,
+                invoiceId: data.invoice_id,
+                serviceId: data.service_id,
+                description: data.description,
+                quantity: parseFloat(data.quantity) || 0,
+                unitPrice: parseFloat(data.unit_price) || 0,
+                totalAmount: parseFloat(data.total_amount) || 0,
+                periodStart: data.period_start,
+                periodEnd: data.period_end
+            };
+        },
+
+        delete: async (id: string): Promise<boolean> => {
+            const { error } = await supabase
+                .from('sub_invoice_line_items')
+                .delete()
+                .eq('id', id);
+
+            return !error;
+        }
+    },
+
+    // -------------------------
+
     subscriptions: {
         findAll: async (): Promise<Subscription[]> => {
             const { data, error } = await supabase
                 .from('sub_subscriptions')
-                .select('*')
+                .select(`
+                    *,
+                    vendor:sub_vendors(name, logo_url)
+                `)
                 .order('cost', { ascending: false });
 
             if (error) {
@@ -17,18 +829,20 @@ export const db = {
             // Map DB flat structure to Nested Type structure
             return (data || []).map((row: any) => ({
                 id: row.id,
+                vendorId: row.vendor_id,
+                vendorName: row.vendor?.name || null,
                 name: row.name,
                 category: row.category,
-                logo: row.logo,
-                renewalDate: row.renewal_date, // Map snake_case to camelCase
+                logo: row.vendor?.logo_url || row.logo,
+                renewalDate: row.renewal_date,
                 cost: row.cost,
                 billingCycle: row.billing_cycle as BillingCycle,
                 paymentMethod: row.payment_method as PaymentMethod,
                 paymentDetails: row.payment_details,
-                autoRenewal: row.auto_renewal ?? true, // Default to true if null
+                autoRenewal: row.auto_renewal ?? true,
                 owner: {
-                    name: row.owner_name,
-                    email: row.owner_email,
+                    name: row.owner_name || 'Unknown',
+                    email: row.owner_email || '',
                 },
                 seats: {
                     total: row.seats_total,
@@ -37,6 +851,42 @@ export const db = {
                 status: row.status as SubscriptionStatus,
             }));
         },
+
+        findLatestByVendor: async (vendorId: string): Promise<Subscription | null> => {
+            const { data, error } = await supabase
+                .from('sub_subscriptions')
+                .select('*')
+                .eq('vendor_id', vendorId)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+
+            if (error) return null;
+
+            return {
+                id: data.id,
+                vendorId: data.vendor_id,
+                name: data.name,
+                category: data.category,
+                logo: data.logo,
+                renewalDate: data.renewal_date,
+                cost: data.cost,
+                billingCycle: data.billing_cycle as BillingCycle,
+                paymentMethod: data.payment_method as PaymentMethod,
+                paymentDetails: data.payment_details,
+                autoRenewal: data.auto_renewal,
+                owner: {
+                    name: data.owner_name || 'Unknown',
+                    email: data.owner_email || '',
+                },
+                seats: {
+                    total: data.seats_total,
+                    used: data.seats_used,
+                },
+                status: data.status as SubscriptionStatus,
+            };
+        },
+
         create: async (sub: Partial<Subscription>): Promise<Subscription | null> => {
             const dbPayload = {
                 name: sub.name,
@@ -48,11 +898,13 @@ export const db = {
                 payment_method: sub.paymentMethod,
                 payment_details: sub.paymentDetails,
                 auto_renewal: sub.autoRenewal ?? true,
-                owner_name: sub.owner?.name,
-                owner_email: sub.owner?.email,
+                owner_name: sub.owner?.name || 'Unknown',
+                owner_email: sub.owner?.email || '',
                 seats_total: sub.seats?.total || 0,
                 seats_used: sub.seats?.used || 0,
                 status: sub.status || 'Active',
+                vendor_id: sub.vendorId,
+                agreement_type: 'Subscription'
             };
 
             const { data, error } = await supabase
@@ -66,9 +918,9 @@ export const db = {
                 throw error;
             }
 
-            // Map back to App Type
             return {
                 id: data.id,
+                vendorId: data.vendor_id,
                 name: data.name,
                 category: data.category,
                 logo: data.logo,
@@ -79,8 +931,8 @@ export const db = {
                 paymentDetails: data.payment_details,
                 autoRenewal: data.auto_renewal,
                 owner: {
-                    name: data.owner_name,
-                    email: data.owner_email,
+                    name: data.owner_name || 'Unknown',
+                    email: data.owner_email || '',
                 },
                 seats: {
                     total: data.seats_total,
@@ -143,8 +995,8 @@ export const db = {
                 paymentDetails: data.payment_details,
                 autoRenewal: data.auto_renewal,
                 owner: {
-                    name: data.owner_name,
-                    email: data.owner_email,
+                    name: data.owner_name || 'Unknown',
+                    email: data.owner_email || '',
                 },
                 seats: {
                     total: data.seats_total,
@@ -165,7 +1017,6 @@ export const db = {
             if (sub.paymentMethod) dbPayload.payment_method = sub.paymentMethod;
             if (sub.paymentDetails !== undefined) dbPayload.payment_details = sub.paymentDetails;
             if (sub.autoRenewal !== undefined) dbPayload.auto_renewal = sub.autoRenewal;
-            // Handle nested updates carefully - typically valid because form sends full object
             if (sub.owner?.name) dbPayload.owner_name = sub.owner.name;
             if (sub.owner?.email) dbPayload.owner_email = sub.owner.email;
             if (sub.status) dbPayload.status = sub.status;
@@ -194,8 +1045,8 @@ export const db = {
                 paymentDetails: data.payment_details,
                 autoRenewal: data.auto_renewal,
                 owner: {
-                    name: data.owner_name,
-                    email: data.owner_email,
+                    name: data.owner_name || 'Unknown',
+                    email: data.owner_email || '',
                 },
                 seats: {
                     total: data.seats_total,
@@ -206,16 +1057,62 @@ export const db = {
         },
 
         delete: async (id: string): Promise<boolean> => {
-            const { error } = await supabase
-                .from('sub_subscriptions')
-                .delete()
-                .eq('id', id);
+            // Manual cascade delete: Line Items -> Invoices -> Services -> Subscription
+            try {
+                // 1. Get invoices to find related line items
+                const { data: invoices } = await supabase
+                    .from('sub_invoices')
+                    .select('id')
+                    .eq('subscription_id', id);
 
-            if (error) {
-                console.error('Error deleting subscription:', error);
+                const invoiceIds = invoices?.map(i => i.id) || [];
+
+                if (invoiceIds.length > 0) {
+                    // 2. Delete line items
+                    await supabase
+                        .from('sub_invoice_line_items')
+                        .delete()
+                        .in('invoice_id', invoiceIds);
+
+                    // 3. Delete invoices
+                    await supabase
+                        .from('sub_invoices')
+                        .delete()
+                        .in('id', invoiceIds);
+                }
+
+                // 4. Delete services
+                // Note: Check if any line items are orphan linked to services but not invoices?
+                // Usually line items are in invoices.
+                // Just in case, try deleting line items by service_id too if needed?
+                // Assuming line items always have invoice_id.
+                // 3.5 Delete assignments
+                await supabase
+                    .from('sub_assignments')
+                    .delete()
+                    .eq('subscription_id', id);
+
+                // 4. Delete services
+                await supabase
+                    .from('sub_subscription_services')
+                    .delete()
+                    .eq('subscription_id', id);
+
+                // 5. Delete subscription
+                const { error } = await supabase
+                    .from('sub_subscriptions')
+                    .delete()
+                    .eq('id', id);
+
+                if (error) {
+                    console.error('Error deleting subscription:', error);
+                    return false;
+                }
+                return true;
+            } catch (error) {
+                console.error('Cascade delete logic failed:', error);
                 return false;
             }
-            return true;
         }
     },
     employees: {
@@ -289,7 +1186,7 @@ export const db = {
                 serialNumber: row.serial_number,
                 type: row.type,
                 model: row.model,
-                assignedTo: row.assigned_to_user?.name || null, // For display simplified
+                assignedTo: row.assigned_to_user?.name || null,
             }));
         },
 
@@ -301,7 +1198,6 @@ export const db = {
                     serial_number: device.serialNumber,
                     type: device.type,
                     model: device.model,
-                    // assigned_to: device.assignedTo // impl later with assignment logic
                 })
                 .select()
                 .single();
@@ -343,8 +1239,6 @@ export const db = {
                 employeeId: row.employee_id,
                 deviceId: row.device_id,
                 assignedDate: row.assigned_date,
-                // These are extra fields for UI display, not strict to valid Assignment type but helpful.
-                // We might need to extend the type or just use 'any' cast in UI for now.
                 assigneeName: row.employee?.name || row.device?.name || 'Unknown'
             }));
         },

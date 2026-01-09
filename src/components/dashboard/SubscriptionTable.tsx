@@ -64,6 +64,7 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                     <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-100">
                         <tr>
                             <th className="px-6 py-3">Application</th>
+                            <th className="px-6 py-3">Vendor</th>
                             <th className="px-6 py-3">Status</th>
                             <th className="px-6 py-3">Cost</th>
                             <th className="px-6 py-3">Renewal</th>
@@ -91,6 +92,9 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                                     </div>
                                 </td>
                                 <td className="px-6 py-4">
+                                    <span className="text-slate-600">{(sub as any).vendorName || '-'}</span>
+                                </td>
+                                <td className="px-6 py-4">
                                     <span className={cn(
                                         "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
                                         sub.status === 'Active' && "bg-slate-50 text-slate-700 border-slate-200",
@@ -107,8 +111,27 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                                     <div className="text-xs text-slate-400">{sub.billingCycle}</div>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <div className="text-slate-700">{formatDate(sub.renewalDate)}</div>
-                                    <div className="text-xs text-slate-400">{sub.paymentMethod}</div>
+                                    {(() => {
+                                        // Handle null/undefined/invalid dates
+                                        if (!sub.renewalDate || sub.renewalDate === 'null' || sub.renewalDate === '') {
+                                            return <div className="text-slate-400">—</div>;
+                                        }
+                                        const renewalDate = new Date(sub.renewalDate);
+                                        // Check for invalid date (epoch = 1970, or 1969 in local timezone)
+                                        if (isNaN(renewalDate.getTime()) || renewalDate.getFullYear() < 1980) {
+                                            return <div className="text-slate-400">—</div>;
+                                        }
+                                        const isPastDue = renewalDate < new Date();
+                                        return (
+                                            <>
+                                                <div className={cn("text-slate-700", isPastDue && "text-red-600 font-medium")}>
+                                                    {formatDate(sub.renewalDate)}
+                                                    {isPastDue && <span className="ml-1 text-xs">(Past Due)</span>}
+                                                </div>
+                                                <div className="text-xs text-slate-400">{sub.paymentMethod}</div>
+                                            </>
+                                        );
+                                    })()}
                                 </td>
                                 <td className="px-6 py-4">
                                     <UtilizationBar total={sub.seats.total} used={sub.seats.used} />

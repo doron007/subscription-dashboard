@@ -15,25 +15,34 @@ export interface RawInvoice {
     confidence_score: number;
 }
 
-export interface AggregatedLineItem {
-    description: string; // The cleaned description
-    original_descriptions: string[]; // For debugging/audit
-    total_cost: number;
-    usage_count: number; // e.g. how many times this item appeared across months or lines
+export interface AnalyzedInvoice {
+    vendor: {
+        name: string;
+        contact_email?: string;
+        website?: string;
+    };
+    invoice: {
+        number: string;
+        date: string;
+        due_date?: string;
+        total_amount: number;
+        currency: string;
+    };
+    line_items: AnalyzedLineItem[];
+    summary: {
+        total_lines: number;
+        confidence_score: number;
+    };
 }
 
-export interface AggregatedSubscription {
-    name: string;
-    category: string;
-    cost: number;
-    last_transaction_date: string;
-    confidence: number;
-    reasoning: string;
-    line_items: {
-        description: string;
-        cost: number;
-        date: string;
-    }[];
+export interface AnalyzedLineItem {
+    description: string; // Cleaned description (e.g. "Office 365 E3")
+    quantity: number;
+    unit_price: number;
+    total_amount: number;
+    service_name: string; // The predicted "Service Catalog" name
+    period_start?: string;
+    period_end?: string;
 }
 
 export interface PipelineContext {

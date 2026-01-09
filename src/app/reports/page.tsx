@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { subscriptionService } from '@/services/subscriptionService';
-import type { Subscription, LineItem } from '@/types';
+import type { Subscription, LineItem, Invoice, Vendor } from '@/types';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Download, FileBarChart, Filter, Calendar as CalendarIcon, TrendingUp, Maximize2, Minimize2, X } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell, AreaChart, Area, LineChart, Line, Legend } from 'recharts';
@@ -15,7 +15,7 @@ import {
 
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1'];
 
-type GroupByOption = 'Category' | 'Owner' | 'Payment Method' | 'Billing Cycle' | 'Service';
+type GroupByOption = 'Category' | 'Owner' | 'Payment Method' | 'Billing Cycle' | 'Service' | 'Vendor';
 type ViewMode = 'Accrual' | 'CashFlow';
 type QuickFilter = 'Custom' | 'Last Year' | 'YTD' | 'Last Quarter' | 'Last Month' | 'Projected Current Year';
 type ExpandedChart = 'Trend' | 'Breakdown' | null;
@@ -34,6 +34,8 @@ interface TrendPoint {
 
 export default function ReportsPage() {
     const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+    const [vendors, setVendors] = useState<(Vendor & { subscriptionCount: number; invoiceCount: number; totalSpend: number })[]>([]);
+    const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [loading, setLoading] = useState(true);
 
     // Controls
@@ -50,8 +52,14 @@ export default function ReportsPage() {
     const [expandedChart, setExpandedChart] = useState<ExpandedChart>(null);
 
     useEffect(() => {
-        subscriptionService.getAll().then(data => {
-            setSubscriptions(data);
+        Promise.all([
+            subscriptionService.getAll(),
+            subscriptionService.getVendors().catch(() => []),
+            subscriptionService.getInvoices().catch(() => [])
+        ]).then(([subsData, vendorsData, invoicesData]) => {
+            setSubscriptions(subsData);
+            setVendors(vendorsData);
+            setInvoices(invoicesData);
             setLoading(false);
             // Initialize Quick Filter
             applyQuickFilter('Projected Current Year');
@@ -168,6 +176,7 @@ export default function ReportsPage() {
                 else if (groupBy === 'Owner') key = sub.owner.name;
                 else if (groupBy === 'Payment Method') key = sub.paymentMethod;
                 else if (groupBy === 'Billing Cycle') key = sub.billingCycle;
+                else if (groupBy === 'Vendor') key = (sub as any).vendorName || 'No Vendor';
                 processItem(key, sub.cost, sub.billingCycle, sub.renewalDate);
             }
         });
@@ -297,6 +306,7 @@ export default function ReportsPage() {
                             className="bg-slate-50 border-slate-200 text-slate-700 text-xs font-medium rounded-lg focus:ring-indigo-500 focus:border-indigo-500 py-1.5 pl-3 pr-8"
                         >
                             <option value="Category">Group: Category</option>
+                            <option value="Vendor">Group: Vendor</option>
                             <option value="Owner">Group: Owner</option>
                             <option value="Service">Group: Service (Line Items)</option>
                             <option value="Payment Method">Group: Payment</option>

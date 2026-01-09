@@ -1,27 +1,51 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { subscriptionService } from '@/services/subscriptionService';
-import type { Subscription } from '@/types';
+import type { Subscription, Invoice, Vendor } from '@/types';
 import { StatsCard } from '@/components/dashboard/StatsCard';
-import { DashboardCharts } from '@/components/dashboard/DashboardCharts';
 import { SubscriptionTable } from '@/components/dashboard/SubscriptionTable';
 import { ActionsBar } from '@/components/dashboard/ActionsBar';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { DollarSign, Layers, CreditCard, AlertCircle } from 'lucide-react';
+import { DollarSign, Layers, CreditCard, AlertCircle, Building2, FileText } from 'lucide-react';
 import Link from 'next/link';
+import { format } from 'date-fns';
+
+const DashboardCharts = dynamic(
+  () => import('@/components/dashboard/DashboardCharts').then(mod => mod.DashboardCharts),
+  { ssr: false }
+);
+
+interface VendorWithStats extends Vendor {
+  subscriptionCount: number;
+  invoiceCount: number;
+  totalSpend: number;
+}
+
+interface InvoiceWithVendor extends Invoice {
+  vendorName?: string;
+}
 
 export default function Dashboard() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [vendors, setVendors] = useState<VendorWithStats[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceWithVendor[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await subscriptionService.getAll();
-        setSubscriptions(data);
+        const [subsData, vendorsData, invoicesData] = await Promise.all([
+          subscriptionService.getAll(),
+          subscriptionService.getVendors().catch(() => []),
+          subscriptionService.getInvoices().catch(() => [])
+        ]);
+        setSubscriptions(subsData);
+        setVendors(vendorsData);
+        setInvoices(invoicesData);
       } catch (err) {
-        console.error("Failed to load subscriptions", err);
+        console.error("Failed to load dashboard data", err);
       } finally {
         setLoading(false);
       }
@@ -36,8 +60,12 @@ export default function Dashboard() {
     return acc + annualCost;
   }, 0);
 
+  // Total from invoices (actual documented spend)
+  const totalInvoicedSpend = invoices.reduce((acc, inv) => acc + (inv.totalAmount || 0), 0);
+
   const activeSubs = subscriptions.filter(s => s.status === 'Active').length;
-  const reviewSubs = subscriptions.filter(s => s.status === 'Review').length;
+  const activeVendors = vendors.length;
+  const pendingInvoices = invoices.filter(inv => inv.status === 'Pending').length;
 
   const upcomingRenewals = subscriptions.filter(sub => {
     if (!sub.renewalDate || sub.status === 'Cancelled') return false;
@@ -47,6 +75,22 @@ export default function Dashboard() {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return diffDays >= 0 && diffDays <= 30;
   }).length;
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0
+    }).format(amount);
+  };
+
+  const formatDate = (dateStr: string) => {
+    try {
+      return format(new Date(dateStr), 'MMM d, yyyy');
+    } catch {
+      return dateStr;
+    }
+  };
 
   if (loading) {
     return (
@@ -68,31 +112,102 @@ export default function Dashboard() {
           <ActionsBar />
         </div>
 
-        {/* Metrics Grid */}
+        {/* Primary Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatsCard
-            label="Total Annual Spend"
-            value={new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(totalAnnualSpend)}
-            // trend={{ value: 0, isPositive: true }} // TODO: Implement historical tracking
+            label={`YTD Spend (${new Date().getFullYear()})`}
+            value={formatCurrency(totalAnnualSpend)}
             icon={DollarSign}
           />
           <StatsCard
             label="Active Subscriptions"
             value={activeSubs.toString()}
-            // trend={{ value: 0, isPositive: true }}
             icon={Layers}
+          />
+          <StatsCard
+            label="Active Vendors"
+            value={activeVendors.toString()}
+            icon={Building2}
           />
           <StatsCard
             label="Upcoming Renewals (30d)"
             value={upcomingRenewals.toString()}
             icon={CreditCard}
           />
-          <StatsCard
-            label="Utilization Alert"
-            value={reviewSubs.toString()}
-            icon={AlertCircle}
-          />
         </div>
+
+        {/* Secondary Metrics - Invoice-based */}
+        {invoices.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-violet-100 text-sm font-medium">Documented Spend (Invoices)</p>
+                  <p className="text-3xl font-bold mt-1">{formatCurrency(totalInvoicedSpend)}</p>
+                </div>
+                <FileText className="w-10 h-10 text-violet-200 opacity-80" />
+              </div>
+              <p className="text-violet-200 text-xs mt-3">{invoices.length} invoice(s) processed</p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-slate-500 text-sm font-medium">Pending Invoices</p>
+                  <p className="text-3xl font-bold text-amber-600 mt-1">{pendingInvoices}</p>
+                </div>
+                <AlertCircle className="w-10 h-10 text-amber-200" />
+              </div>
+              <p className="text-slate-400 text-xs mt-3">Requires attention</p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-slate-500 text-sm font-medium">Top Vendor</p>
+                  <p className="text-xl font-bold text-slate-800 mt-1 truncate">
+                    {vendors.length > 0 ? vendors.sort((a, b) => b.totalSpend - a.totalSpend)[0]?.name : '-'}
+                  </p>
+                </div>
+                <Building2 className="w-10 h-10 text-slate-200" />
+              </div>
+              <p className="text-slate-400 text-xs mt-3">
+                {vendors.length > 0 && vendors.sort((a, b) => b.totalSpend - a.totalSpend)[0]?.totalSpend > 0
+                  ? formatCurrency(vendors.sort((a, b) => b.totalSpend - a.totalSpend)[0].totalSpend)
+                  : 'No spend data'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Recent Invoices Widget */}
+        {invoices.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="font-semibold text-slate-900">Recent Invoices</h3>
+              <span className="text-xs text-slate-500">{invoices.length} total</span>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {invoices.slice(0, 5).map((invoice) => (
+                <div key={invoice.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-violet-100 rounded-lg flex items-center justify-center">
+                      <FileText className="w-5 h-5 text-violet-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-800">#{invoice.invoiceNumber || 'N/A'}</p>
+                      <p className="text-sm text-slate-500">{invoice.vendorName || 'Unknown Vendor'}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-slate-800">{formatCurrency(invoice.totalAmount)}</p>
+                    <p className="text-xs text-slate-400">{formatDate(invoice.invoiceDate)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Charts */}
         <DashboardCharts subscriptions={subscriptions} />

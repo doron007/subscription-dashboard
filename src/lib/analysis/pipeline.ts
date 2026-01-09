@@ -1,11 +1,11 @@
 import { extractRawInvoiceData } from './extraction';
 import { aggregateInvoice } from './aggregation';
-import { AggregatedSubscription, PipelineContext } from './types';
+import { AnalyzedInvoice, PipelineContext } from './types';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface PipelineResult {
     success: boolean;
-    data?: AggregatedSubscription;
+    data?: AnalyzedInvoice;
     context: PipelineContext;
     error?: string;
 }
@@ -35,25 +35,24 @@ export async function runInvoiceAnalysisPipeline(images: string[]): Promise<Pipe
         });
         log(`Extracted ${rawData.line_items.length} raw line items. Vendor: ${rawData.vendor_name}`);
 
-        // Step 2: Aggregation
+        // Step 2: Aggregation & Analysis
         const startAgg = Date.now();
-        log("Step 2: Running Aggregation Logic...");
-        const aggregatedData = aggregateInvoice(rawData);
+        log("Step 2: Analyzing and Normalizing Data...");
+        const analyzedData = aggregateInvoice(rawData);
 
         context.steps.push({
             name: "Aggregation",
             status: "success",
             duration_ms: Date.now() - startAgg,
             details: {
-                original_count: rawData.line_items.length,
-                final_count: aggregatedData.line_items.length
+                total_lines: analyzedData.summary.total_lines
             }
         });
-        log(`Aggregation complete. Reduced to ${aggregatedData.line_items.length} consolidated items.`);
+        log(`Analysis complete. Found ${analyzedData.line_items.length} details.`);
 
         return {
             success: true,
-            data: aggregatedData,
+            data: analyzedData,
             context
         };
 

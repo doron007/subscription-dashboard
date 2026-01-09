@@ -31,15 +31,16 @@ async function main() {
         console.log(`2. Running Analysis Pipeline...`);
         const result = await runInvoiceAnalysisPipeline(images);
 
-        if (result.success) {
+        if (result.success && result.data) {
             console.log(`\n✅ PIPELINE SUCCESS`);
-            console.log(`Vendor: ${result.data.name}`);
-            console.log(`Total Cost: $${result.data.cost}`);
+            console.log(`Vendor: ${result.data.vendor.name}`);
+            console.log(`Invoice #: ${result.data.invoice.number}`);
+            console.log(`Total: ${result.data.invoice.total_amount} ${result.data.invoice.currency}`);
             console.log(`Items: ${result.data.line_items.length}`);
 
             console.log(`\n--- Line Items Preview ---`);
             result.data.line_items.forEach(item => {
-                console.log(` - ${item.description} | $${item.cost} | ${item.date}`);
+                console.log(` - [${item.service_name}] ${item.description.substring(0, 30)}... | Qty: ${item.quantity} | Unit: ${item.unit_price} | Total: ${item.total_amount}`);
             });
 
             console.log(`\n--- Debug Logs ---`);

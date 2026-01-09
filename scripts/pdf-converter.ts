@@ -1,4 +1,4 @@
-import { pdfjs } from 'react-pdf'; // or direct import?
+// pdfjs-dist usage in Node:
 // pdfjs-dist usage in Node:
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { createCanvas } from 'canvas';

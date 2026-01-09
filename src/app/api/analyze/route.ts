@@ -33,7 +33,16 @@ export async function POST(request: Request) {
             }
 
             // Return array format to match frontend expectation (even though it's single)
-            parsedData = [result.data];
+            // The frontend likely expects { candidates: [...] }
+            // For the new pipeline, we'll return { analysis: result.data } to distinguish it 
+            // or we adapt `result.data` to look like a candidate if we want quick compat, 
+            // but we really want the rich data.
+            // Let's return a distinct shape for clarity.
+            return NextResponse.json({
+                success: true,
+                analysis: result.data, // AnalyzedInvoice
+                logs: result.context.logs
+            });
 
             // Log for debugging
             console.log("[Pipeline] Success. Logs:", JSON.stringify(result.context.logs, null, 2));

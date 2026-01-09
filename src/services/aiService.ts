@@ -9,6 +9,11 @@ export interface AnalyzedSubscription {
         description: string;
         cost: number;
         date?: string;
+        // New granular fields
+        service_name?: string;
+        quantity?: number;
+        unit_price?: number;
+        total_amount?: number;
     }[];
 }
 
@@ -38,10 +43,38 @@ export const aiService = {
 
         if (!response.ok) {
             const err = await response.json();
-            throw new Error(err.error || 'Image analysis failed');
+            console.error("[AI Service] Error Details:", err.details);
+            console.error("[AI Service] Logs:", err.logs);
+            throw new Error(err.details || err.error || 'Image analysis failed');
         }
 
         const data = await response.json();
+
+        // Handle new API shape { analysis: ... }
+        if (data.analysis) {
+            // Adapt AnalyzedInvoice to AnalyzedSubscription[] for frontend compatibility
+            // This allows us to keep the frontend mostly the same while passing through rich data
+            const analysis = data.analysis;
+            const adapted: AnalyzedSubscription = {
+                name: analysis.vendor.name,
+                category: "Software", // Default
+                cost: analysis.invoice.total_amount,
+                last_transaction_date: analysis.invoice.date,
+                confidence: analysis.summary.confidence_score,
+                reasoning: `Extracted from invoice ${analysis.invoice.number}`,
+                line_items: analysis.line_items.map((li: any) => ({
+                    description: li.description,
+                    cost: li.total_amount,
+                    date: analysis.invoice.date,
+                    service_name: li.service_name,
+                    quantity: li.quantity,
+                    unit_price: li.unit_price,
+                    total_amount: li.total_amount
+                }))
+            };
+            return [adapted];
+        }
+
         return data.candidates;
     }
 };

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import type { Subscription } from '@/types';
 
 interface DashboardChartsProps {
@@ -80,10 +80,10 @@ export function DashboardCharts({ subscriptions }: DashboardChartsProps) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
             {/* Monthly Cash Flow Trend */}
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <h3 className="text-lg font-bold text-slate-900 mb-4">Projected Cash Flow (2024)</h3>
-                <div className="h-[300px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm min-w-0">
+                <h3 className="text-lg font-bold text-slate-900 mb-4">Projected Cash Flow ({new Date().getFullYear()})</h3>
+                <div style={{ width: '100%', height: 300, minWidth: 0, minHeight: 0 }}>
+                    <ResponsiveContainer width="100%" height={300}>
                         <AreaChart data={monthlyTrend}>
                             <defs>
                                 <linearGradient id="colorSpend" x1="0" y1="0" x2="0" y2="1">
@@ -117,12 +117,12 @@ export function DashboardCharts({ subscriptions }: DashboardChartsProps) {
             </div>
 
             {/* Category Spend Distribution */}
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm min-w-0">
                 <h3 className="text-lg font-bold text-slate-900 mb-4">Annual Spend by Category</h3>
-                <div className="h-[300px] w-full flex">
+                <div className="flex" style={{ width: '100%', height: 300, minWidth: 0, minHeight: 0 }}>
                     {/* Chart */}
-                    <div className="flex-1">
-                        <ResponsiveContainer width="100%" height="100%">
+                    <div className="flex-1" style={{ minWidth: 200, minHeight: 200 }}>
+                        <ResponsiveContainer width="100%" height={300}>
                             <PieChart>
                                 <Pie
                                     data={categoryData}
@@ -145,20 +145,24 @@ export function DashboardCharts({ subscriptions }: DashboardChartsProps) {
                     {/* Legend */}
                     <div className="w-48 overflow-y-auto max-h-[250px] pr-2 custom-scrollbar">
                         <div className="space-y-3">
-                            {categoryData.map((entry, index) => (
-                                <div key={index} className="flex items-center justify-between text-sm">
-                                    <div className="flex items-center gap-2">
-                                        <div
-                                            className="w-3 h-3 rounded-full"
-                                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                                        />
-                                        <span className="text-slate-600 truncate max-w-[100px]" title={entry.name}>{entry.name}</span>
+                            {categoryData.map((entry, index) => {
+                                const total = categoryData.reduce((a, b) => a + b.value, 0);
+                                const percentage = total > 0 ? ((entry.value / total) * 100).toFixed(0) : '0';
+                                return (
+                                    <div key={index} className="flex items-center justify-between text-sm">
+                                        <div className="flex items-center gap-2">
+                                            <div
+                                                className="w-3 h-3 rounded-full"
+                                                style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                                            />
+                                            <span className="text-slate-600 truncate max-w-[100px]" title={entry.name}>{entry.name}</span>
+                                        </div>
+                                        <span className="font-medium text-slate-900">
+                                            {percentage}%
+                                        </span>
                                     </div>
-                                    <span className="font-medium text-slate-900">
-                                        {((entry.value / categoryData.reduce((a, b) => a + b.value, 0)) * 100).toFixed(0)}%
-                                    </span>
-                                </div>
-                            ))}
+                                )
+                            })}
                         </div>
                     </div>
                 </div>

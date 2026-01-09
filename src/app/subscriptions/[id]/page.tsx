@@ -4,17 +4,29 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { Subscription, BillingCycle, PaymentMethod } from '@/types';
-import { Loader2, ArrowLeft, Trash2, Box, Calendar, CreditCard, User, AlertCircle } from 'lucide-react';
+import { Loader2, ArrowLeft, Trash2, Box, Calendar, CreditCard, User, AlertCircle, Package, FileText, ListChecks, Users } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { AssignmentManager } from '@/components/assignments/AssignmentManager';
 import Link from 'next/link';
 import { TransactionList } from '@/components/subscriptions/TransactionList';
+import { ServicesTab } from '@/components/subscriptions/ServicesTab';
+import { InvoicesTab } from '@/components/subscriptions/InvoicesTab';
+import { LineItemsTab } from '@/components/subscriptions/LineItemsTab';
+import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
+import { AlertTriangle } from 'lucide-react';
 
 export default function SubscriptionDetailPage({ params }: { params: { id: string } }) {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [activeTab, setActiveTab] = useState<'overview' | 'payments'>('overview');
+    const [activeTab, setActiveTab] = useState<'details' | 'services' | 'invoices' | 'lineitems' | 'team'>('details');
+
+    // Delete handling
+    const [vendor, setVendor] = useState<{ id: string, name: string } | null>(null);
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [deleteType, setDeleteType] = useState<'subscription' | 'vendor'>('subscription');
+    const [cascadePreview, setCascadePreview] = useState<any>(undefined);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -35,6 +47,16 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
         const fetchSubscription = async () => {
             try {
                 const sub = await subscriptionService.getById(params.id);
+
+                if (sub.vendorId) {
+                    try {
+                        const v = await subscriptionService.getVendor(sub.vendorId);
+                        setVendor(v);
+                    } catch (e) {
+                        console.error('Failed to fetch vendor', e);
+                    }
+                }
+
                 setFormData({
                     name: sub.name,
                     category: sub.category,
@@ -92,15 +114,42 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
         }
     };
 
-    const handleDelete = async () => {
-        if (!confirm('Are you sure you want to delete this subscription? This action cannot be undone.')) return;
+    const handleDeleteClick = async (type: 'subscription' | 'vendor') => {
+        setDeleteType(type);
+        setCascadePreview(undefined);
+        setIsDeleting(false);
 
+        if (type === 'vendor') {
+            if (!vendor) return;
+            try {
+                // Check cascade impact
+                const res = await subscriptionService.deleteVendor(vendor.id, false);
+                if (res.requiresConfirmation) {
+                    setCascadePreview(res.impact);
+                }
+            } catch (error) {
+                console.error('Failed to check impact:', error);
+            }
+        }
+
+        setDeleteModalOpen(true);
+    };
+
+    const handleConfirmDelete = async () => {
+        setIsDeleting(true);
         try {
-            await subscriptionService.delete(params.id);
-            router.push('/');
+            if (deleteType === 'vendor' && vendor) {
+                await subscriptionService.deleteVendor(vendor.id, true);
+                router.push('/'); // Or to vendors list if exists
+            } else {
+                await subscriptionService.delete(params.id);
+                router.push('/');
+            }
             router.refresh();
         } catch (error) {
-            alert('Failed to delete subscription');
+            console.error('Failed to delete:', error);
+            alert('Failed to delete. Please try again.');
+            setIsDeleting(false);
         }
     };
 
@@ -132,7 +181,7 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                     <div className="flex gap-3">
                         <button
                             type="button"
-                            onClick={handleDelete}
+                            onClick={() => handleDeleteClick('subscription')}
                             className="text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center"
                         >
                             <Trash2 className="w-4 h-4 mr-2" />
@@ -154,30 +203,62 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
 
                     {/* Tabs */}
                     <div className="border-b border-slate-200">
-                        <nav className="-mb-px flex space-x-8">
+                        <nav className="-mb-px flex space-x-6 overflow-x-auto">
                             <button
-                                onClick={() => setActiveTab('overview')}
-                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'overview'
-                                        ? 'border-purple-600 text-purple-600'
-                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                onClick={() => setActiveTab('details')}
+                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors flex items-center gap-2 ${activeTab === 'details'
+                                    ? 'border-purple-600 text-purple-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
                                     }`}
                             >
-                                Overview
+                                <Box className="w-4 h-4" />
+                                Details
                             </button>
                             <button
-                                onClick={() => setActiveTab('payments')}
-                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'payments'
-                                        ? 'border-purple-600 text-purple-600'
-                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                onClick={() => setActiveTab('services')}
+                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors flex items-center gap-2 ${activeTab === 'services'
+                                    ? 'border-purple-600 text-purple-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
                                     }`}
                             >
-                                Payment History
+                                <Package className="w-4 h-4" />
+                                Services
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('invoices')}
+                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors flex items-center gap-2 ${activeTab === 'invoices'
+                                    ? 'border-purple-600 text-purple-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                    }`}
+                            >
+                                <FileText className="w-4 h-4" />
+                                Invoices
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('lineitems')}
+                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors flex items-center gap-2 ${activeTab === 'lineitems'
+                                    ? 'border-purple-600 text-purple-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                    }`}
+                            >
+                                <ListChecks className="w-4 h-4" />
+                                Line Items
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('team')}
+                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors flex items-center gap-2 ${activeTab === 'team'
+                                    ? 'border-purple-600 text-purple-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                    }`}
+                            >
+                                <Users className="w-4 h-4" />
+                                Team
                             </button>
                         </nav>
                     </div>
                 </div>
 
-                {activeTab === 'overview' ? (
+                {activeTab === 'details' && (
                     <div className="flex flex-col lg:flex-row gap-8 items-start">
                         {/* Main Form Area */}
                         <div className="flex-1 w-full space-y-6">
@@ -347,21 +428,71 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                                 <p className="text-xs text-slate-400 mt-3 text-center">Last updated recently</p>
                             </div>
 
-                            {/* Assignments Widget */}
-                            <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
-                                <div className="p-4 border-b border-slate-100">
-                                    <h3 className="font-semibold text-slate-900">Seat Assignments</h3>
+                            {/* Danger Zone */}
+                            <div className="bg-red-50 p-6 rounded-xl border border-red-100 shadow-sm">
+                                <div className="flex items-center gap-2 mb-4 text-red-700">
+                                    <AlertTriangle className="w-5 h-5" />
+                                    <h3 className="font-semibold">Danger Zone</h3>
                                 </div>
-                                <div className="p-4">
-                                    <AssignmentManager subscriptionId={params.id} />
+                                <div className="space-y-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteClick('subscription')}
+                                        className="w-full py-2 bg-white border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 font-medium rounded-lg text-sm transition-colors"
+                                    >
+                                        Delete Subscription
+                                    </button>
+
+                                    {vendor && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteClick('vendor')}
+                                            className="w-full py-2 bg-red-600 text-white hover:bg-red-700 font-medium rounded-lg text-sm transition-colors"
+                                        >
+                                            Delete Vendor & All Data
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>
                     </div>
-                ) : (
-                    <TransactionList subscriptionId={params.id} />
+                )}
+
+                {activeTab === 'services' && (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <ServicesTab subscriptionId={params.id} />
+                    </div>
+                )}
+
+                {activeTab === 'invoices' && (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <InvoicesTab subscriptionId={params.id} />
+                    </div>
+                )}
+
+                {activeTab === 'lineitems' && (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <LineItemsTab subscriptionId={params.id} />
+                    </div>
+                )}
+
+                {activeTab === 'team' && (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <h3 className="font-semibold text-slate-900 mb-4">Team & Seat Assignments</h3>
+                        <AssignmentManager subscriptionId={params.id} />
+                    </div>
                 )}
             </div>
+
+            <ConfirmDeleteModal
+                isOpen={deleteModalOpen}
+                onClose={() => setDeleteModalOpen(false)}
+                onConfirm={handleConfirmDelete}
+                entityName={deleteType === 'vendor' ? (vendor?.name || 'Vendor') : formData.name}
+                entityType={deleteType === 'vendor' ? 'Vendor' : 'Subscription'}
+                cascadeImpact={cascadePreview}
+                isDeleting={isDeleting}
+            />
         </DashboardLayout>
     );
 }
