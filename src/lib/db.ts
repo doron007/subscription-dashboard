@@ -107,20 +107,26 @@ export const db = {
         },
 
         update: async (id: string, vendor: Partial<Vendor>): Promise<Vendor | null> => {
+            // Only include fields that are explicitly provided
+            const updatePayload: Record<string, any> = {
+                updated_at: new Date().toISOString()
+            };
+            if (vendor.name !== undefined) updatePayload.name = vendor.name;
+            if (vendor.website !== undefined) updatePayload.website = vendor.website;
+            if (vendor.contactEmail !== undefined) updatePayload.contact_email = vendor.contactEmail;
+            if (vendor.logoUrl !== undefined) updatePayload.logo_url = vendor.logoUrl;
+
             const { data, error } = await supabase
                 .from('sub_vendors')
-                .update({
-                    name: vendor.name,
-                    website: vendor.website,
-                    contact_email: vendor.contactEmail,
-                    logo_url: vendor.logoUrl,
-                    updated_at: new Date().toISOString()
-                })
+                .update(updatePayload)
                 .eq('id', id)
                 .select()
                 .single();
 
-            if (error) return null;
+            if (error) {
+                console.error('Error updating vendor:', error);
+                return null;
+            }
             return {
                 id: data.id,
                 name: data.name,
@@ -446,6 +452,38 @@ export const db = {
                 .eq('service_id', id);
 
             return { lineItems: data?.length || 0 };
+        },
+
+        // Delete all services for a subscription (used when reprocessing invoices)
+        deleteBySubscription: async (subscriptionId: string): Promise<number> => {
+            // First get all service IDs for this subscription
+            const { data: services } = await supabase
+                .from('sub_subscription_services')
+                .select('id')
+                .eq('subscription_id', subscriptionId);
+
+            if (!services || services.length === 0) return 0;
+
+            const serviceIds = services.map(s => s.id);
+
+            // Delete line items referencing these services
+            await supabase
+                .from('sub_invoice_line_items')
+                .delete()
+                .in('service_id', serviceIds);
+
+            // Delete the services
+            const { error } = await supabase
+                .from('sub_subscription_services')
+                .delete()
+                .eq('subscription_id', subscriptionId);
+
+            if (error) {
+                console.error('Error deleting services:', error);
+                return 0;
+            }
+
+            return services.length;
         }
     },
 
@@ -541,20 +579,25 @@ export const db = {
 
         // Update existing invoice
         update: async (id: string, invoice: Partial<Invoice>): Promise<Invoice> => {
+            // Only include fields that are explicitly provided
+            const updatePayload: Record<string, any> = {};
+            if (invoice.invoiceDate !== undefined) updatePayload.invoice_date = invoice.invoiceDate;
+            if (invoice.totalAmount !== undefined) updatePayload.total_amount = invoice.totalAmount;
+            if (invoice.currency !== undefined) updatePayload.currency = invoice.currency;
+            if (invoice.status !== undefined) updatePayload.status = invoice.status;
+            if (invoice.dueDate !== undefined) updatePayload.due_date = invoice.dueDate;
+
             const { data, error } = await supabase
                 .from('sub_invoices')
-                .update({
-                    invoice_date: invoice.invoiceDate,
-                    total_amount: invoice.totalAmount,
-                    currency: invoice.currency,
-                    status: invoice.status,
-                    updated_at: new Date().toISOString()
-                })
+                .update(updatePayload)
                 .eq('id', id)
                 .select()
                 .single();
 
-            if (error) throw error;
+            if (error) {
+                console.error('Error updating invoice:', error);
+                throw error;
+            }
             return {
                 id: data.id,
                 vendorId: data.vendor_id,
@@ -985,6 +1028,7 @@ export const db = {
 
             return {
                 id: data.id,
+                vendorId: data.vendor_id,
                 name: data.name,
                 category: data.category,
                 logo: data.logo,
@@ -1035,6 +1079,7 @@ export const db = {
 
             return {
                 id: data.id,
+                vendorId: data.vendor_id,
                 name: data.name,
                 category: data.category,
                 logo: data.logo,

@@ -183,15 +183,18 @@ function ShadowItContent() {
 
             if (isRichInvoice) {
                 // Reconstruct AnalyzedInvoice for the API
+                // Use actual invoice number if available, otherwise generate a fallback
+                const invoiceNumber = sub.invoice_number ||
+                    `INV-${(sub.last_transaction_date || '').replace(/\D/g, '')}-${Math.round(sub.cost)}`;
+
                 const analysisPayload = {
                     vendor: {
                         name: sub.name,
-                        contact_email: '', // Not strictly available in AnalyzedSubscription adaptation, would need better plumbing
+                        contact_email: '',
                         website: ''
                     },
                     invoice: {
-                        // Generate stable invoice number for idempotency (vendor+date+total hash)
-                        number: `INV-${sub.name.slice(0, 10)}-${(sub.last_transaction_date || '').replace(/\D/g, '')}-${Math.round(sub.cost)}`,
+                        number: invoiceNumber,
                         date: sub.last_transaction_date || new Date().toISOString().split('T')[0],
                         total_amount: sub.cost,
                         currency: 'USD'

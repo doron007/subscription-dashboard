@@ -12,6 +12,28 @@ export async function GET() {
     }
 }
 
+// Generate logo URL from vendor website or name using Google Favicons API
+function generateLogoUrl(website?: string, name?: string): string {
+    // Try to extract domain from website URL
+    if (website) {
+        try {
+            const url = new URL(website.startsWith('http') ? website : `https://${website}`);
+            return `https://www.google.com/s2/favicons?domain=${url.hostname}&sz=128`;
+        } catch {
+            // Invalid URL, fall through to name-based approach
+        }
+    }
+
+    // Fallback: derive domain from vendor name
+    if (name) {
+        const domain = name.replace(/\s+/g, '').toLowerCase() + '.com';
+        return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+    }
+
+    // Last resort: empty string (UI will show initials fallback)
+    return '';
+}
+
 // Sanitize numeric values from AI extraction
 // Handles: "($ 63.02)" -> -63.02, "$1,234.56" -> 1234.56, null -> 0
 function sanitizeNumber(value: any): number {
@@ -42,15 +64,24 @@ export async function POST(request: Request) {
         console.log(`[InvoiceAPI] Creating invoice for vendor: ${analysis.vendor.name}`);
 
         // 1. Create or Find Vendor
+        const vendorLogoUrl = generateLogoUrl(analysis.vendor.website, analysis.vendor.name);
         let vendor = await db.vendors.findByName(analysis.vendor.name);
         if (!vendor) {
             vendor = await db.vendors.create({
                 name: analysis.vendor.name,
                 contactEmail: analysis.vendor.contact_email,
-                website: analysis.vendor.website
+                website: analysis.vendor.website,
+                logoUrl: vendorLogoUrl
             });
             console.log(`[InvoiceAPI] Created new vendor: ${vendor.id}`);
         } else {
+            // Update logo if vendor exists but doesn't have one
+            if (!vendor.logoUrl && vendorLogoUrl) {
+                const updatedVendor = await db.vendors.update(vendor.id, { logoUrl: vendorLogoUrl });
+                if (updatedVendor) {
+                    vendor = updatedVendor;
+                }
+            }
             console.log(`[InvoiceAPI] Found existing vendor: ${vendor.id}`);
         }
 
@@ -65,7 +96,8 @@ export async function POST(request: Request) {
                 name: `${vendor.name} Master Agreement`,
                 status: 'Active',
                 billingCycle: 'Monthly',
-                paymentMethod: 'Invoice'
+                paymentMethod: 'Invoice',
+                logo: vendorLogoUrl
             });
         }
 
@@ -76,20 +108,29 @@ export async function POST(request: Request) {
         const subscriptionId = subscription.id;
 
         // Check for existing invoice by invoice number (idempotency)
+        console.log(`[InvoiceAPI] Looking for invoice number: ${analysis.invoice.number}`);
         let invoice = await db.invoices.findByNumber(analysis.invoice.number);
 
         if (invoice) {
-            // Invoice already exists - update it and delete old line items
+            // Invoice already exists - update it and delete old data for clean re-import
             console.log(`[InvoiceAPI] Found existing invoice ${invoice.id}, updating...`);
-            invoice = await db.invoices.update(invoice.id, {
+            const updatePayload = {
                 invoiceDate: analysis.invoice.date,
                 totalAmount: sanitizeNumber(analysis.invoice.total_amount),
-                currency: analysis.invoice.currency,
-                status: 'Paid'
-            });
+                currency: analysis.invoice.currency || 'USD',
+                status: 'Paid' as const
+            };
+            console.log(`[InvoiceAPI] Update payload:`, JSON.stringify(updatePayload));
+            invoice = await db.invoices.update(invoice.id, updatePayload);
+            console.log(`[InvoiceAPI] Invoice updated successfully`);
+
             // Delete existing line items so we can re-create them
             await db.invoices.deleteLineItems(invoice.id);
-            console.log(`[InvoiceAPI] Deleted old line items, will re-create...`);
+            console.log(`[InvoiceAPI] Deleted old line items`);
+
+            // Delete existing services for this subscription to avoid duplicates
+            const deletedServices = await db.services.deleteBySubscription(subscriptionId);
+            console.log(`[InvoiceAPI] Deleted ${deletedServices} old services, will re-create...`);
         } else {
             // Create new invoice
             invoice = await db.invoices.create({
@@ -188,6 +229,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, invoice });
     } catch (error) {
         console.error('[InvoiceAPI] Error:', error);
+        console.error('[InvoiceAPI] Stack:', (error as Error).stack);
         return NextResponse.json({ error: 'Internal Server Error', details: (error as Error).message }, { status: 500 });
     }
 }

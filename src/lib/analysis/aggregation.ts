@@ -56,8 +56,8 @@ export function aggregateInvoice(raw: RawInvoice): AnalyzedInvoice {
         },
         invoice: {
             // Generate stable invoice number if missing (for idempotency)
-            // Use hash of vendor+date+total so re-imports match the same invoice
-            number: raw.invoice_number || `INV-${raw.vendor_name?.slice(0, 10) || 'UNK'}-${(raw.invoice_date || '').replace(/\D/g, '')}-${Math.round(raw.total_amount)}`,
+            // Use date+total only (not vendor name) so re-imports with slight vendor name variations still match
+            number: raw.invoice_number || `INV-${(raw.invoice_date || '').replace(/\D/g, '')}-${Math.round(raw.total_amount)}`,
             date: raw.invoice_date || new Date().toISOString().split('T')[0],
             total_amount: raw.total_amount,
             currency: raw.currency || 'USD'

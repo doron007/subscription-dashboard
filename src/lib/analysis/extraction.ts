@@ -10,11 +10,14 @@ export async function extractRawInvoiceData(images: string[]): Promise<RawInvoic
     }
 
     const prompt = `
-        You are a Data Entry Clerk. 
+        You are a Data Entry Clerk.
         **Goal:** Transcribe this invoice EXACTLY as it appears. Do not summarize. Do not apply group logic.
-        
+
         **Fields to Extract:**
-        1. Vendor Name (Company Name at top)
+        1. Vendor Name - Extract the FULL OFFICIAL company name exactly as shown on the invoice letterhead/header.
+           Include "Inc", "LLC", "Corp", "Ltd" or similar suffixes if present.
+           Use the complete name (e.g., "Pinnacle Business Systems" NOT just "Pinnacle").
+           Look for the company name in the logo area, header, or "From:" section.
         2. Invoice Date (YYYY-MM-DD)
         3. Invoice Number
         4. Total Amount (Grand Total)
@@ -27,7 +30,7 @@ export async function extractRawInvoiceData(images: string[]): Promise<RawInvoic
 
         **Return JSON Only:**
         {
-            "vendor_name": "string",
+            "vendor_name": "string (FULL official company name)",
             "invoice_date": "YYYY-MM-DD",
             "invoice_number": "string",
             "total_amount": 0.00,

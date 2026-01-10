@@ -5,6 +5,9 @@ import { MoreHorizontal, AlertCircle, Search } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 
+import { VendorLogo } from '@/components/common/VendorLogo';
+
+
 interface SubscriptionTableProps {
     subscriptions: Subscription[];
     enableSearch?: boolean;
@@ -82,9 +85,7 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                             >
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg border border-slate-200 p-1.5 bg-white flex items-center justify-center">
-                                            <img src={sub.logo} alt={sub.name} className="w-full h-full object-contain" />
-                                        </div>
+                                        <VendorLogo name={sub.name} logo={sub.logo} />
                                         <div>
                                             <div className="font-medium text-slate-900">{sub.name}</div>
                                             <div className="text-xs text-slate-500">{sub.category}</div>

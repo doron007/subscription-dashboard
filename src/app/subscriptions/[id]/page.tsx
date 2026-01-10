@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { subscriptionService } from '@/services/subscriptionService';
-import type { Subscription, BillingCycle, PaymentMethod } from '@/types';
-import { Loader2, ArrowLeft, Trash2, Box, Calendar, CreditCard, User, AlertCircle, Package, FileText, ListChecks, Users } from 'lucide-react';
+import { VendorDetailsSection } from '@/components/subscriptions/VendorDetailsSection';
+import type { Subscription, BillingCycle, PaymentMethod, Vendor } from '@/types';
+import { Loader2, ArrowLeft, Trash2, Box, Calendar, CreditCard, User, AlertCircle, Package, FileText, ListChecks, Users, AlertTriangle, Globe, Mail } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { AssignmentManager } from '@/components/assignments/AssignmentManager';
 import Link from 'next/link';
@@ -13,7 +14,6 @@ import { ServicesTab } from '@/components/subscriptions/ServicesTab';
 import { InvoicesTab } from '@/components/subscriptions/InvoicesTab';
 import { LineItemsTab } from '@/components/subscriptions/LineItemsTab';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
-import { AlertTriangle } from 'lucide-react';
 
 export default function SubscriptionDetailPage({ params }: { params: { id: string } }) {
     const router = useRouter();
@@ -22,7 +22,9 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
     const [activeTab, setActiveTab] = useState<'details' | 'services' | 'invoices' | 'lineitems' | 'team'>('details');
 
     // Delete handling
-    const [vendor, setVendor] = useState<{ id: string, name: string } | null>(null);
+    const [vendor, setVendor] = useState<Vendor | null>(null);
+    const [vendorForm, setVendorForm] = useState<Partial<Vendor>>({}); // Form state for vendor edits
+
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [deleteType, setDeleteType] = useState<'subscription' | 'vendor'>('subscription');
     const [cascadePreview, setCascadePreview] = useState<any>(undefined);
@@ -51,25 +53,40 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                 if (sub.vendorId) {
                     try {
                         const v = await subscriptionService.getVendor(sub.vendorId);
+
+                        // Prefill website from favicon if website is missing
+                        if (!v.website && v.logoUrl && v.logoUrl.includes('google.com/s2/favicons')) {
+                            try {
+                                const urlObj = new URL(v.logoUrl);
+                                const domain = urlObj.searchParams.get('domain');
+                                if (domain) {
+                                    v.website = domain;
+                                }
+                            } catch (e) {
+                                // Ignore URL parsing errors
+                            }
+                        }
+
                         setVendor(v);
+                        setVendorForm(v); // Initialize form
                     } catch (e) {
                         console.error('Failed to fetch vendor', e);
                     }
                 }
 
                 setFormData({
-                    name: sub.name,
-                    category: sub.category,
-                    cost: sub.cost,
-                    renewalDate: sub.renewalDate,
-                    billingCycle: sub.billingCycle,
-                    paymentMethod: sub.paymentMethod,
+                    name: sub.name || '',
+                    category: sub.category || '',
+                    cost: sub.cost || 0,
+                    renewalDate: sub.renewalDate || '',
+                    billingCycle: sub.billingCycle || 'Annual',
+                    paymentMethod: sub.paymentMethod || 'Credit Card',
                     paymentDetails: sub.paymentDetails || '',
-                    autoRenewal: sub.autoRenewal,
-                    ownerName: sub.owner.name,
-                    ownerEmail: sub.owner.email,
-                    status: sub.status,
-                    seatsTotal: sub.seats.total,
+                    autoRenewal: sub.autoRenewal ?? true,
+                    ownerName: sub.owner?.name || '',
+                    ownerEmail: sub.owner?.email || '',
+                    status: sub.status || 'Active',
+                    seatsTotal: sub.seats?.total || 0,
                 });
             } catch (error) {
                 console.error(error);
@@ -103,6 +120,11 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                 },
                 status: formData.status as any,
             };
+
+
+            if (vendor && vendor.id && Object.keys(vendorForm).length > 0) {
+                await subscriptionService.updateVendor(vendor.id, vendorForm);
+            }
 
             await subscriptionService.update(params.id, payload);
             router.push('/');
@@ -156,6 +178,14 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleVendorChange = (field: keyof Vendor, value: string) => {
+        setVendorForm(prev => ({ ...prev, [field]: value }));
+        // Optimistically update the main vendor object for display
+        if (vendor) {
+            setVendor({ ...vendor, [field]: value });
+        }
     };
 
     if (loading) {
@@ -264,6 +294,17 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                         <div className="flex-1 w-full space-y-6">
 
                             <form id="edit-form" onSubmit={handleSubmit} className="space-y-10">
+
+                                {/* Section: Vendor Info */}
+                                {vendor && (
+                                    <>
+                                        <VendorDetailsSection
+                                            vendor={vendor}
+                                            onChange={handleVendorChange}
+                                        />
+                                        <hr className="border-slate-100" />
+                                    </>
+                                )}
 
                                 {/* Section: General */}
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-x-8 gap-y-4">

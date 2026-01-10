@@ -89,7 +89,9 @@ export const subscriptionService = {
         });
 
         if (!response.ok) {
-            throw new Error('Failed to create invoice');
+            const errorData = await response.json().catch(() => ({}));
+            console.error('Invoice API error:', errorData);
+            throw new Error(`Failed to create invoice: ${errorData.details || errorData.error || response.statusText}`);
         }
 
         return response.json();

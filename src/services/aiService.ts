@@ -5,6 +5,7 @@ export interface AnalyzedSubscription {
     last_transaction_date?: string;
     confidence: number;
     reasoning: string;
+    invoice_number?: string; // Actual invoice number from source document
     line_items?: {
         description: string;
         cost: number;
@@ -62,6 +63,7 @@ export const aiService = {
                 last_transaction_date: analysis.invoice.date,
                 confidence: analysis.summary.confidence_score,
                 reasoning: `Extracted from invoice ${analysis.invoice.number}`,
+                invoice_number: analysis.invoice.number, // Preserve actual invoice number for idempotency
                 line_items: analysis.line_items.map((li: any) => ({
                     description: li.description,
                     cost: li.total_amount,
