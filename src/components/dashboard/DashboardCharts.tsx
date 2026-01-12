@@ -1,128 +1,170 @@
 'use client';
 
-import { useMemo } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import type { Subscription } from '@/types';
+import { useMemo, useState, useEffect } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import type { Subscription, Invoice } from '@/types';
 
 interface DashboardChartsProps {
     subscriptions: Subscription[];
+    invoices?: Invoice[];
 }
 
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1'];
 
-export function DashboardCharts({ subscriptions }: DashboardChartsProps) {
+export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChartsProps) {
 
-    // 1. Calculate Monthly Spend Trend (Simulated for this year based on active subs)
+    // 1. Calculate Monthly Spend Trend - show trailing 13 months for YoY comparison
     const monthlyTrend = useMemo(() => {
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        // Generate trailing 13 months (current + 12 prior = same month last year)
+        const now = new Date();
+        const trailing13Months: { date: Date; label: string }[] = [];
+        for (let i = 12; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            trailing13Months.push({
+                date: d,
+                label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+            });
+        }
 
-        return months.map((month, index) => {
-            // Logic: Include costs if sub is active. 
-            // For Monthly: Include every month.
-            // For Annual: Include only in the renewal month? Or amortize?
-            // Dashboard usually shows "Cash Flow" (actual payments) or "Accrual" (monthly cost).
-            // Let's show "Accrual" (Amortized Monthly cost) for a smoother graph, 
-            // OR "Projected Spend" if we want to show spikes.
-            // Let's go with AMORTIZED Monthly Value (MRR view) which is most useful for budgeting.
+        // If we have invoices, use actual invoice data
+        if (invoices.length > 0) {
+            return trailing13Months.map(({ date, label }) => {
+                const monthlyTotal = invoices.reduce((sum, inv) => {
+                    const invDate = new Date(inv.invoiceDate);
+                    // Match invoices from same month AND year
+                    if (invDate.getMonth() === date.getMonth() &&
+                        invDate.getFullYear() === date.getFullYear()) {
+                        return sum + (inv.totalAmount || 0);
+                    }
+                    return sum;
+                }, 0);
 
-            const monthlyTotal = subscriptions.reduce((sum, sub) => {
-                if (sub.status !== 'Active') return sum;
-                return sum + (sub.cost / (sub.billingCycle === 'Annual' ? 12 : 1));
-            }, 0);
+                return {
+                    name: label,
+                    spend: monthlyTotal
+                };
+            });
+        }
 
-            // Add some mock variation to make the chart look alive for demo purposes if static
-            // But let's stick to real data: MRR is likely flat unless we have historical data.
-            // Since we don't have historical data tables yet, we'll show the CURRENT snapshot projected flat.
-            // TO make it interesting, let's pretend we have some growth or just show the decomposition?
-            // Actually, let's show "Upcoming Renewals Cost" by month? That's useful.
-
-            // Revised Logic: Projected ACTUAL Spend (Cash Flow)
+        // Fallback to subscription-based projection
+        return trailing13Months.map(({ date, label }) => {
             const projectedCashFlow = subscriptions.reduce((sum, sub) => {
                 if (sub.status !== 'Active') return sum;
 
                 const renewalDate = new Date(sub.renewalDate);
-                const renewalMonth = renewalDate.getMonth(); // 0-11
+                const renewalMonth = renewalDate.getMonth();
 
                 if (sub.billingCycle === 'Monthly') {
-                    return sum + sub.cost; // Pays every month
+                    return sum + sub.cost;
                 } else {
-                    // Pays only in renewal month
-                    return sum + (renewalMonth === index ? sub.cost : 0);
+                    return sum + (renewalMonth === date.getMonth() ? sub.cost : 0);
                 }
             }, 0);
 
             return {
-                name: month,
+                name: label,
                 spend: projectedCashFlow
             };
         });
-    }, [subscriptions]);
+    }, [subscriptions, invoices]);
 
-    // 2. Category Breakdown
+    // 2. Category/Vendor Breakdown - prefer invoice data
     const categoryData = useMemo(() => {
         const map = new Map<string, number>();
-        subscriptions.forEach(sub => {
-            if (sub.status !== 'Active') return;
-            // Annualize cost for fair comparison
-            const annualCost = sub.billingCycle === 'Annual' ? sub.cost : sub.cost * 12;
-            const current = map.get(sub.category) || 0;
-            map.set(sub.category, current + annualCost);
-        });
+
+        // If we have invoices, group by vendor
+        if (invoices.length > 0) {
+            invoices.forEach(inv => {
+                const key = (inv as any).vendorName || 'Unknown Vendor';
+                const current = map.get(key) || 0;
+                map.set(key, current + (inv.totalAmount || 0));
+            });
+        } else {
+            // Fallback to subscription category breakdown
+            subscriptions.forEach(sub => {
+                if (sub.status !== 'Active') return;
+                const annualCost = sub.billingCycle === 'Annual' ? sub.cost : sub.cost * 12;
+                const current = map.get(sub.category) || 0;
+                map.set(sub.category, current + annualCost);
+            });
+        }
 
         return Array.from(map.entries())
             .map(([name, value]) => ({ name, value }))
             .sort((a, b) => b.value - a.value);
-    }, [subscriptions]);
+    }, [subscriptions, invoices]);
 
-    if (subscriptions.length === 0) return null;
+    // Delay chart rendering until after layout is complete
+    const [chartsReady, setChartsReady] = useState(false);
+    useEffect(() => {
+        // Double RAF ensures layout is fully computed
+        const frame1 = requestAnimationFrame(() => {
+            const frame2 = requestAnimationFrame(() => {
+                setChartsReady(true);
+            });
+            return () => cancelAnimationFrame(frame2);
+        });
+        return () => cancelAnimationFrame(frame1);
+    }, []);
+
+    // Don't render if no data at all
+    if (subscriptions.length === 0 && invoices.length === 0) return null;
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-            {/* Monthly Cash Flow Trend */}
+            {/* Monthly Spend Bar Chart - Trailing 13 Months */}
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm min-w-0">
-                <h3 className="text-lg font-bold text-slate-900 mb-4">Projected Cash Flow ({new Date().getFullYear()})</h3>
-                <div style={{ width: '100%', height: 300, minWidth: 0, minHeight: 0 }}>
-                    <ResponsiveContainer width="100%" height={300}>
-                        <AreaChart data={monthlyTrend}>
-                            <defs>
-                                <linearGradient id="colorSpend" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2} />
-                                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                                </linearGradient>
-                            </defs>
+                <h3 className="text-lg font-bold text-slate-900 mb-4">
+                    {invoices.length > 0 ? 'Monthly Spend (Trailing 13 Months)' : `Projected Cash Flow (${new Date().getFullYear()})`}
+                </h3>
+                <div style={{ width: '100%', height: 300 }}>
+                    {chartsReady && (
+                    <ResponsiveContainer width="100%" height={300} minWidth={0} minHeight={0}>
+                        <BarChart data={monthlyTrend}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dy={10} />
+                            <XAxis
+                                dataKey="name"
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fill: '#64748b', fontSize: 10 }}
+                                dy={10}
+                                interval={0}
+                                angle={-45}
+                                textAnchor="end"
+                                height={50}
+                            />
                             <YAxis
                                 axisLine={false}
                                 tickLine={false}
                                 tick={{ fill: '#64748b', fontSize: 12 }}
-                                tickFormatter={(value) => `$${value}`}
+                                tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
                             />
                             <Tooltip
                                 formatter={(value: number | undefined) => [`$${(value || 0).toLocaleString()}`, 'Spend']}
                                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                             />
-                            <Area
-                                type="monotone"
+                            <Bar
                                 dataKey="spend"
-                                stroke="#8b5cf6"
-                                strokeWidth={2}
-                                fillOpacity={1}
-                                fill="url(#colorSpend)"
+                                fill="#8b5cf6"
+                                radius={[4, 4, 0, 0]}
                             />
-                        </AreaChart>
+                        </BarChart>
                     </ResponsiveContainer>
+                    )}
                 </div>
             </div>
 
-            {/* Category Spend Distribution */}
+            {/* Spend Distribution by Vendor/Category */}
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm min-w-0">
-                <h3 className="text-lg font-bold text-slate-900 mb-4">Annual Spend by Category</h3>
-                <div className="flex" style={{ width: '100%', height: 300, minWidth: 0, minHeight: 0 }}>
+                <h3 className="text-lg font-bold text-slate-900 mb-4">
+                    {invoices.length > 0 ? 'Total Spend by Vendor' : 'Annual Spend by Category'}
+                </h3>
+                <div className="flex" style={{ width: '100%', height: 300, minHeight: 200 }}>
                     {/* Chart */}
                     <div className="flex-1" style={{ minWidth: 200, minHeight: 200 }}>
-                        <ResponsiveContainer width="100%" height={300}>
+                        {chartsReady && (
+                        <ResponsiveContainer width="100%" height={300} minWidth={0} minHeight={0}>
                             <PieChart>
                                 <Pie
                                     data={categoryData}
@@ -140,6 +182,7 @@ export function DashboardCharts({ subscriptions }: DashboardChartsProps) {
                                 <Tooltip formatter={(value: number | undefined) => `$${(value || 0).toLocaleString()}`} />
                             </PieChart>
                         </ResponsiveContainer>
+                        )}
                     </div>
 
                     {/* Legend */}

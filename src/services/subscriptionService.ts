@@ -138,6 +138,12 @@ export const subscriptionService = {
         return response.json();
     },
 
+    getAllLineItems: async () => {
+        const response = await fetch('/api/line-items', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Failed to fetch line items');
+        return response.json();
+    },
+
     // Vendors
     updateVendor: async (id: string, data: any) => {
         const response = await fetch(`/api/vendors/${id}`, {

@@ -53,15 +53,29 @@ export default function Dashboard() {
     loadData();
   }, []);
 
-  // Calculate summary metrics
-  const totalAnnualSpend = subscriptions.reduce((acc, sub) => {
-    if (sub.status === 'Cancelled') return acc;
-    const annualCost = sub.billingCycle === 'Monthly' ? sub.cost * 12 : sub.cost;
-    return acc + annualCost;
+  // Calculate summary metrics - prefer invoice data when available
+  // Calculate spend for trailing 13 months (for YoY comparison)
+  const thirteenMonthsAgo = new Date();
+  thirteenMonthsAgo.setMonth(thirteenMonthsAgo.getMonth() - 13);
+
+  const trailingSpend = invoices.reduce((acc, inv) => {
+    const invDate = new Date(inv.invoiceDate);
+    if (invDate >= thirteenMonthsAgo) {
+      return acc + (inv.totalAmount || 0);
+    }
+    return acc;
   }, 0);
 
-  // Total from invoices (actual documented spend)
   const totalInvoicedSpend = invoices.reduce((acc, inv) => acc + (inv.totalAmount || 0), 0);
+
+  // Use trailing 13 months invoice data if available, otherwise fall back to subscription projection
+  const totalAnnualSpend = trailingSpend > 0
+    ? trailingSpend
+    : subscriptions.reduce((acc, sub) => {
+        if (sub.status === 'Cancelled') return acc;
+        const annualCost = sub.billingCycle === 'Monthly' ? sub.cost * 12 : sub.cost;
+        return acc + annualCost;
+      }, 0);
 
   const activeSubs = subscriptions.filter(s => s.status === 'Active').length;
   const activeVendors = vendors.length;
@@ -115,7 +129,7 @@ export default function Dashboard() {
         {/* Primary Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatsCard
-            label={`YTD Spend (${new Date().getFullYear()})`}
+            label={trailingSpend > 0 ? "Spend (Trailing 13 Months)" : `YTD Spend (${new Date().getFullYear()})`}
             value={formatCurrency(totalAnnualSpend)}
             icon={DollarSign}
           />
@@ -210,7 +224,7 @@ export default function Dashboard() {
         )}
 
         {/* Charts */}
-        <DashboardCharts subscriptions={subscriptions} />
+        <DashboardCharts subscriptions={subscriptions} invoices={invoices} />
 
         {/* Main Content */}
         <SubscriptionTable subscriptions={subscriptions} limit={5} enableSearch={true} />
