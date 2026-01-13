@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
+import { resolveBillingMonth, parsePeriodFromDescription } from '@/lib/periodParser';
+import { format } from 'date-fns';
 
-// GET /api/line-items - Get all line items with invoice info
+// GET /api/line-items - Get all line items with invoice info and resolved billing month
 export async function GET() {
     try {
         const { data, error } = await supabase
@@ -13,10 +15,16 @@ export async function GET() {
                 quantity,
                 unit_price,
                 total_amount,
+                period_start,
+                period_end,
+                billing_month_override,
+                invoice_id,
                 invoice:sub_invoices(
                     id,
                     invoice_date,
-                    vendor:sub_vendors(name)
+                    invoice_number,
+                    subscription_id,
+                    vendor:sub_vendors(id, name)
                 )
             `)
             .order('total_amount', { ascending: false });
@@ -26,15 +34,42 @@ export async function GET() {
             return NextResponse.json({ error: 'Failed to fetch line items' }, { status: 500 });
         }
 
-        const lineItems = (data || []).map((item: any) => ({
-            id: item.id,
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: parseFloat(item.unit_price) || 0,
-            totalAmount: parseFloat(item.total_amount) || 0,
-            invoiceDate: item.invoice?.invoice_date,
-            vendorName: item.invoice?.vendor?.name || 'Unknown Vendor'
-        }));
+        const lineItems = (data || []).map((item: any) => {
+            const invoiceDate = item.invoice?.invoice_date || null;
+            const parsed = parsePeriodFromDescription(item.description || '');
+
+            // Resolve billing month using priority hierarchy
+            const billingMonth = resolveBillingMonth(
+                item.billing_month_override,
+                item.period_start,
+                item.description || '',
+                invoiceDate
+            );
+
+            return {
+                id: item.id,
+                invoiceId: item.invoice_id,
+                subscriptionId: item.invoice?.subscription_id,
+                description: item.description,
+                quantity: item.quantity,
+                unitPrice: parseFloat(item.unit_price) || 0,
+                totalAmount: parseFloat(item.total_amount) || 0,
+                // Original invoice date (for reference)
+                invoiceDate,
+                invoiceNumber: item.invoice?.invoice_number,
+                vendorId: item.invoice?.vendor?.id,
+                vendorName: item.invoice?.vendor?.name || 'Unknown Vendor',
+                // Period fields
+                periodStart: item.period_start || (parsed.periodStart ? format(parsed.periodStart, 'yyyy-MM-dd') : null),
+                periodEnd: item.period_end || (parsed.periodEnd ? format(parsed.periodEnd, 'yyyy-MM-dd') : null),
+                // Manual override (if any)
+                billingMonthOverride: item.billing_month_override,
+                // Resolved billing month (the one to use for reports)
+                billingMonth,
+                // Flag indicating if this was manually overridden
+                isManualOverride: !!item.billing_month_override
+            };
+        });
 
         return NextResponse.json(lineItems);
     } catch (error) {

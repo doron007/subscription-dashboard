@@ -1,12 +1,14 @@
 import type { Subscription } from '@/types';
 import { formatCurrency, formatDate, cn } from '@/lib/utils';
 import { UtilizationBar } from './UtilizationBar';
-import { MoreHorizontal, AlertCircle, Search } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { MoreHorizontal, AlertCircle, Search, ArrowUp, ArrowDown } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 
 import { VendorLogo } from '@/components/common/VendorLogo';
 
+type SortColumn = 'name' | 'vendor' | 'status' | 'cost' | 'renewal' | 'utilization' | 'owner' | null;
+type SortDirection = 'asc' | 'desc' | null;
 
 interface SubscriptionTableProps {
     subscriptions: Subscription[];
@@ -17,10 +19,28 @@ interface SubscriptionTableProps {
 
 export function SubscriptionTable({ subscriptions, enableSearch = false, limit, title = "Active Subscriptions" }: SubscriptionTableProps) {
     const [searchTerm, setSearchTerm] = useState('');
+    const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+    const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+
+    // Cycle through sort states: none -> asc -> desc -> none
+    const handleSort = useCallback((column: SortColumn) => {
+        if (sortColumn !== column) {
+            setSortColumn(column);
+            setSortDirection('asc');
+        } else if (sortDirection === 'asc') {
+            setSortDirection('desc');
+        } else if (sortDirection === 'desc') {
+            setSortColumn(null);
+            setSortDirection(null);
+        } else {
+            setSortDirection('asc');
+        }
+    }, [sortColumn, sortDirection]);
 
     const filteredSubscriptions = useMemo(() => {
-        let result = subscriptions;
+        let result = [...subscriptions];
 
+        // Filter by search term
         if (searchTerm) {
             const lower = searchTerm.toLowerCase();
             result = result.filter(sub =>
@@ -30,8 +50,53 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
             );
         }
 
+        // Sort if column and direction are set
+        if (sortColumn && sortDirection) {
+            result.sort((a, b) => {
+                let aVal: any;
+                let bVal: any;
+
+                switch (sortColumn) {
+                    case 'name':
+                        aVal = a.name.toLowerCase();
+                        bVal = b.name.toLowerCase();
+                        break;
+                    case 'vendor':
+                        aVal = ((a as any).vendorName || '').toLowerCase();
+                        bVal = ((b as any).vendorName || '').toLowerCase();
+                        break;
+                    case 'status':
+                        aVal = a.status;
+                        bVal = b.status;
+                        break;
+                    case 'cost':
+                        aVal = a.cost || 0;
+                        bVal = b.cost || 0;
+                        break;
+                    case 'renewal':
+                        aVal = a.renewalDate ? new Date(a.renewalDate).getTime() : 0;
+                        bVal = b.renewalDate ? new Date(b.renewalDate).getTime() : 0;
+                        break;
+                    case 'utilization':
+                        aVal = a.seats.total > 0 ? a.seats.used / a.seats.total : 0;
+                        bVal = b.seats.total > 0 ? b.seats.used / b.seats.total : 0;
+                        break;
+                    case 'owner':
+                        aVal = a.owner.name.toLowerCase();
+                        bVal = b.owner.name.toLowerCase();
+                        break;
+                    default:
+                        return 0;
+                }
+
+                if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
         return result;
-    }, [subscriptions, searchTerm]);
+    }, [subscriptions, searchTerm, sortColumn, sortDirection]);
 
     const displaySubscriptions = limit ? filteredSubscriptions.slice(0, limit) : filteredSubscriptions;
 
@@ -66,13 +131,83 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                 <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-100">
                         <tr>
-                            <th className="px-6 py-3">Application</th>
-                            <th className="px-6 py-3">Vendor</th>
-                            <th className="px-6 py-3">Status</th>
-                            <th className="px-6 py-3">Cost</th>
-                            <th className="px-6 py-3">Renewal</th>
-                            <th className="px-6 py-3">Utilization</th>
-                            <th className="px-6 py-3">Owner</th>
+                            <th
+                                className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('name')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Application
+                                    {sortColumn === 'name' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('vendor')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Vendor
+                                    {sortColumn === 'vendor' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('status')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Status
+                                    {sortColumn === 'status' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('cost')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Cost
+                                    {sortColumn === 'cost' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('renewal')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Renewal
+                                    {sortColumn === 'renewal' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('utilization')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Utilization
+                                    {sortColumn === 'utilization' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('owner')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Owner
+                                    {sortColumn === 'owner' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
                             <th className="px-6 py-3"></th>
                         </tr>
                     </thead>

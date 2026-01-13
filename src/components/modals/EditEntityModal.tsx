@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Sparkles } from 'lucide-react';
 
 type EntityType = 'Service' | 'Line Item';
 
@@ -8,6 +9,34 @@ interface EditEntityModalProps {
     onSave: (data: any) => Promise<void>;
     initialData: any;
     entityType: EntityType;
+}
+
+/**
+ * Extract period dates from description text (same logic as periodParser)
+ */
+function extractPeriodFromDescription(description: string): { periodStart?: string; periodEnd?: string } {
+    if (!description) return {};
+
+    const dateRangePattern = /(\d{1,2})\/(\d{1,2})\/(\d{4})\s*[-–]\s*\n?\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/;
+    const match = description.match(dateRangePattern);
+
+    if (match) {
+        const startMonth = parseInt(match[1]);
+        const startDay = parseInt(match[2]);
+        const startYear = parseInt(match[3]);
+        const endMonth = parseInt(match[4]);
+        const endDay = parseInt(match[5]);
+        const endYear = parseInt(match[6]);
+
+        if (startMonth >= 1 && startMonth <= 12 && startDay >= 1 && startDay <= 31 &&
+            endMonth >= 1 && endMonth <= 12 && endDay >= 1 && endDay <= 31) {
+            return {
+                periodStart: `${startYear}-${String(startMonth).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`,
+                periodEnd: `${endYear}-${String(endMonth).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`
+            };
+        }
+    }
+    return {};
 }
 
 export function EditEntityModal({
@@ -20,11 +49,31 @@ export function EditEntityModal({
     const [formData, setFormData] = useState<any>(initialData || {});
     const [isSaving, setIsSaving] = useState(false);
 
+    // Parse dates from description
+    const parsedDates = useMemo(() => {
+        if (entityType === 'Line Item' && formData.description) {
+            return extractPeriodFromDescription(formData.description);
+        }
+        return {};
+    }, [formData.description, entityType]);
+
+    // Check if we have parsed dates that aren't yet in the form
+    const hasSuggestedDates = parsedDates.periodStart && !formData.periodStart;
+
     useEffect(() => {
         if (initialData) {
             setFormData(initialData);
         }
     }, [initialData]);
+
+    // Apply suggested dates
+    const applySuggestedDates = () => {
+        setFormData({
+            ...formData,
+            periodStart: parsedDates.periodStart,
+            periodEnd: parsedDates.periodEnd
+        });
+    };
 
     if (!isOpen) return null;
 
@@ -156,6 +205,30 @@ export function EditEntityModal({
                                         />
                                     </div>
                                 </div>
+                                {/* Suggested Dates from Description */}
+                                {hasSuggestedDates && (
+                                    <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Sparkles className="w-4 h-4 text-cyan-400" />
+                                                <div>
+                                                    <p className="text-cyan-400 font-medium text-sm">Detected Period</p>
+                                                    <p className="text-cyan-500/80 text-xs mt-0.5">
+                                                        {parsedDates.periodStart} to {parsedDates.periodEnd}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={applySuggestedDates}
+                                                className="px-3 py-1.5 bg-cyan-500 hover:bg-cyan-600 text-white text-xs font-medium rounded-lg transition-colors"
+                                            >
+                                                Apply
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-sm text-gray-400 mb-1">Start Date</label>

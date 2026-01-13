@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { Subscription, Invoice, Vendor } from '@/types';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Download, TrendingUp, Maximize2, Minimize2 } from 'lucide-react';
+import { Download, TrendingUp, Maximize2, Minimize2, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from 'recharts';
 import Papa from 'papaparse';
 import {
@@ -34,10 +35,19 @@ interface StackedTrendPoint {
 
 interface LineItemWithInfo {
     id: string;
+    invoiceId: string;
+    subscriptionId?: string;
     description: string;
     totalAmount: number;
     invoiceDate: string;
+    invoiceNumber?: string;
+    vendorId?: string;
     vendorName: string;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    billingMonthOverride?: string | null;
+    billingMonth: string; // Resolved billing month (yyyy-MM-dd format)
+    isManualOverride?: boolean;
 }
 
 // Extract clean service name from description
@@ -70,6 +80,7 @@ function extractServiceName(description: string): string {
 }
 
 export default function ReportsPage() {
+    const router = useRouter();
     const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
     const [vendors, setVendors] = useState<(Vendor & { subscriptionCount: number; invoiceCount: number; totalSpend: number })[]>([]);
     const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -161,6 +172,16 @@ export default function ReportsPage() {
         return () => cancelAnimationFrame(frame1);
     }, []);
 
+    // Navigate to subscription detail page with invoices tab
+    const handleRowClick = useCallback((subscriptionId: string | undefined, vendorName: string) => {
+        if (subscriptionId) {
+            router.push(`/subscriptions/${subscriptionId}?tab=invoices`);
+        } else {
+            // If no subscription ID, navigate to subscriptions list filtered by vendor
+            router.push(`/subscriptions?vendor=${encodeURIComponent(vendorName)}`);
+        }
+    }, [router]);
+
     // Get month range based on filter
     const monthRange = useMemo(() => {
         if (quickFilter === 'TTM') {
@@ -189,23 +210,25 @@ export default function ReportsPage() {
 
         if (groupBy === 'Service' && lineItems.length > 0) {
             // Filter and group line items by service within the selected time range
+            // Use billingMonth (resolved period) instead of invoiceDate
             lineItems.forEach(item => {
-                if (!item.invoiceDate) return;
-                const itemDate = parseISO(item.invoiceDate);
-                const inRange = monthRange.some(month => isSameMonth(itemDate, month));
+                if (!item.billingMonth) return;
+                const itemBillingDate = parseISO(item.billingMonth);
+                const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
                 if (inRange) {
                     const key = extractServiceName(item.description);
                     keyTotals.set(key, (keyTotals.get(key) || 0) + item.totalAmount);
                 }
             });
         } else {
-            // Filter and group invoices by vendor within the selected time range
-            invoices.forEach(inv => {
-                const invDate = parseISO(inv.invoiceDate);
-                const inRange = monthRange.some(month => isSameMonth(invDate, month));
+            // For vendor grouping, aggregate line items by vendor using their billing months
+            lineItems.forEach(item => {
+                if (!item.billingMonth) return;
+                const itemBillingDate = parseISO(item.billingMonth);
+                const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
                 if (inRange) {
-                    const key = (inv as any).vendorName || 'Unknown';
-                    keyTotals.set(key, (keyTotals.get(key) || 0) + (inv.totalAmount || 0));
+                    const key = item.vendorName || 'Unknown';
+                    keyTotals.set(key, (keyTotals.get(key) || 0) + item.totalAmount);
                 }
             });
         }
@@ -214,7 +237,7 @@ export default function ReportsPage() {
         return Array.from(keyTotals.entries())
             .sort((a, b) => b[1] - a[1])
             .map(([key]) => key);
-    }, [invoices, lineItems, groupBy, monthRange]);
+    }, [lineItems, groupBy, monthRange]);
 
     // Calculate stacked trend data
     const stackedTrendData: StackedTrendPoint[] = useMemo(() => {
@@ -232,63 +255,41 @@ export default function ReportsPage() {
                 point[key] = 0;
             });
 
-            if (groupBy === 'Service' && lineItems.length > 0) {
-                // Sum line items for this month by service
-                lineItems.forEach(item => {
-                    if (!item.invoiceDate) return;
-                    const itemDate = parseISO(item.invoiceDate);
-                    if (isSameMonth(itemDate, month)) {
-                        const key = extractServiceName(item.description);
-                        point[key] = (point[key] || 0) + item.totalAmount;
-                        point.total += item.totalAmount;
-                    }
-                });
-            } else {
-                // Sum invoices for this month by vendor
-                invoices.forEach(inv => {
-                    const invDate = parseISO(inv.invoiceDate);
-                    if (isSameMonth(invDate, month)) {
-                        const key = (inv as any).vendorName || 'Unknown';
-                        const amount = inv.totalAmount || 0;
-                        point[key] = (point[key] || 0) + amount;
-                        point.total += amount;
-                    }
-                });
-            }
+            // Always use line items with resolved billingMonth for accurate period allocation
+            lineItems.forEach(item => {
+                if (!item.billingMonth) return;
+                const itemBillingDate = parseISO(item.billingMonth);
+                if (isSameMonth(itemBillingDate, month)) {
+                    const key = groupBy === 'Service'
+                        ? extractServiceName(item.description)
+                        : (item.vendorName || 'Unknown');
+                    point[key] = (point[key] || 0) + item.totalAmount;
+                    point.total += item.totalAmount;
+                }
+            });
 
             return point;
         });
-    }, [monthRange, invoices, lineItems, stackKeys, groupBy]);
+    }, [monthRange, lineItems, stackKeys, groupBy]);
 
     // Aggregated breakdown data
     const aggregatedData: AggregatedData[] = useMemo(() => {
         const map = new Map<string, number>();
         let totalPeriodCost = 0;
 
-        if (groupBy === 'Service' && lineItems.length > 0) {
-            // Filter and group line items by service
-            lineItems.forEach(item => {
-                if (!item.invoiceDate) return;
-                const itemDate = parseISO(item.invoiceDate);
-                const inRange = monthRange.some(month => isSameMonth(itemDate, month));
-                if (inRange) {
-                    const key = extractServiceName(item.description);
-                    map.set(key, (map.get(key) || 0) + item.totalAmount);
-                    totalPeriodCost += item.totalAmount;
-                }
-            });
-        } else {
-            // Filter and group invoices by vendor
-            invoices.forEach(inv => {
-                const invDate = parseISO(inv.invoiceDate);
-                const inRange = monthRange.some(month => isSameMonth(invDate, month));
-                if (inRange) {
-                    const key = (inv as any).vendorName || 'Unknown Vendor';
-                    map.set(key, (map.get(key) || 0) + (inv.totalAmount || 0));
-                    totalPeriodCost += (inv.totalAmount || 0);
-                }
-            });
-        }
+        // Always use line items with resolved billingMonth for accurate period allocation
+        lineItems.forEach(item => {
+            if (!item.billingMonth) return;
+            const itemBillingDate = parseISO(item.billingMonth);
+            const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
+            if (inRange) {
+                const key = groupBy === 'Service'
+                    ? extractServiceName(item.description)
+                    : (item.vendorName || 'Unknown Vendor');
+                map.set(key, (map.get(key) || 0) + item.totalAmount);
+                totalPeriodCost += item.totalAmount;
+            }
+        });
 
         return Array.from(map.entries())
             .map(([name, cost], index) => ({
@@ -298,7 +299,7 @@ export default function ReportsPage() {
                 color: COLORS[index % COLORS.length]
             }))
             .sort((a, b) => b.cost - a.cost);
-    }, [invoices, lineItems, monthRange, groupBy]);
+    }, [lineItems, monthRange, groupBy]);
 
     // Color map for consistent colors
     const colorMap = useMemo(() => {
@@ -632,22 +633,55 @@ export default function ReportsPage() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {aggregatedData.map((row, index) => (
-                                        <tr key={index} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-4 py-3 font-medium text-slate-900">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
-                                                    <span className="truncate">{row.name}</span>
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-right text-slate-900 font-medium">
-                                                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(row.cost)}
-                                            </td>
-                                            <td className="px-4 py-3 text-right text-slate-500">
-                                                {row.percentage.toFixed(1)}%
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {aggregatedData.map((row, index) => {
+                                        // Find line items matching this row for navigation
+                                        const matchingItems = lineItems.filter(item => {
+                                            if (!item.billingMonth) return false;
+                                            const itemBillingDate = parseISO(item.billingMonth);
+                                            const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
+                                            if (!inRange) return false;
+
+                                            const key = groupBy === 'Service'
+                                                ? extractServiceName(item.description)
+                                                : (item.vendorName || 'Unknown Vendor');
+                                            return key === row.name;
+                                        });
+
+                                        const hasManualOverrides = matchingItems.some(item => item.isManualOverride);
+                                        const firstItem = matchingItems[0];
+
+                                        return (
+                                            <tr
+                                                key={index}
+                                                className="transition-colors hover:bg-slate-50 cursor-pointer group"
+                                                onClick={() => {
+                                                    if (firstItem) {
+                                                        handleRowClick(firstItem.subscriptionId, firstItem.vendorName);
+                                                    }
+                                                }}
+                                                title="Click to view invoices and make corrections"
+                                            >
+                                                <td className="px-4 py-3 font-medium text-slate-900">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
+                                                        <span className="truncate">{row.name}</span>
+                                                        {hasManualOverrides && (
+                                                            <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-normal">
+                                                                adjusted
+                                                            </span>
+                                                        )}
+                                                        <ExternalLink className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-500 transition-colors ml-auto" />
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-right text-slate-900 font-medium">
+                                                    {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(row.cost)}
+                                                </td>
+                                                <td className="px-4 py-3 text-right text-slate-500">
+                                                    {row.percentage.toFixed(1)}%
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                     {aggregatedData.length === 0 && (
                                         <tr>
                                             <td colSpan={3} className="px-4 py-8 text-center text-slate-400">

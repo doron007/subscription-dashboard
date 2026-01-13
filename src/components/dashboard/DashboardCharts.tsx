@@ -4,16 +4,25 @@ import { useMemo, useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import type { Subscription, Invoice } from '@/types';
 
+interface LineItemWithBillingMonth {
+    id: string;
+    totalAmount: number;
+    billingMonth: string; // yyyy-MM-dd format
+    vendorName: string;
+}
+
 interface DashboardChartsProps {
     subscriptions: Subscription[];
     invoices?: Invoice[];
+    lineItems?: LineItemWithBillingMonth[];
 }
 
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1'];
 
-export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChartsProps) {
+export function DashboardCharts({ subscriptions, invoices = [], lineItems = [] }: DashboardChartsProps) {
 
     // 1. Calculate Monthly Spend Trend - show trailing 13 months for YoY comparison
+    // Use line items with billingMonth when available for accurate period attribution
     const monthlyTrend = useMemo(() => {
         // Generate trailing 13 months (current + 12 prior = same month last year)
         const now = new Date();
@@ -26,7 +35,28 @@ export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChart
             });
         }
 
-        // If we have invoices, use actual invoice data
+        // If we have line items with billing months, use them for accurate period attribution
+        if (lineItems.length > 0) {
+            return trailing13Months.map(({ date, label }) => {
+                const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+                const monthlyTotal = lineItems.reduce((sum, item) => {
+                    // billingMonth is in yyyy-MM-dd format, extract yyyy-MM
+                    const itemMonth = item.billingMonth?.substring(0, 7);
+                    if (itemMonth === monthStr) {
+                        return sum + (item.totalAmount || 0);
+                    }
+                    return sum;
+                }, 0);
+
+                return {
+                    name: label,
+                    spend: monthlyTotal
+                };
+            });
+        }
+
+        // Fallback: If we have invoices but no line items, use invoice dates
         if (invoices.length > 0) {
             return trailing13Months.map(({ date, label }) => {
                 const monthlyTotal = invoices.reduce((sum, inv) => {
@@ -46,7 +76,7 @@ export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChart
             });
         }
 
-        // Fallback to subscription-based projection
+        // Final fallback to subscription-based projection
         return trailing13Months.map(({ date, label }) => {
             const projectedCashFlow = subscriptions.reduce((sum, sub) => {
                 if (sub.status !== 'Active') return sum;
@@ -66,21 +96,28 @@ export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChart
                 spend: projectedCashFlow
             };
         });
-    }, [subscriptions, invoices]);
+    }, [subscriptions, invoices, lineItems]);
 
-    // 2. Category/Vendor Breakdown - prefer invoice data
+    // 2. Category/Vendor Breakdown - prefer line items with billing month
     const categoryData = useMemo(() => {
         const map = new Map<string, number>();
 
-        // If we have invoices, group by vendor
-        if (invoices.length > 0) {
+        // If we have line items, group by vendor using billing month data
+        if (lineItems.length > 0) {
+            lineItems.forEach(item => {
+                const key = item.vendorName || 'Unknown Vendor';
+                const current = map.get(key) || 0;
+                map.set(key, current + (item.totalAmount || 0));
+            });
+        } else if (invoices.length > 0) {
+            // Fallback to invoice data grouped by vendor
             invoices.forEach(inv => {
                 const key = (inv as any).vendorName || 'Unknown Vendor';
                 const current = map.get(key) || 0;
                 map.set(key, current + (inv.totalAmount || 0));
             });
         } else {
-            // Fallback to subscription category breakdown
+            // Final fallback to subscription category breakdown
             subscriptions.forEach(sub => {
                 if (sub.status !== 'Active') return;
                 const annualCost = sub.billingCycle === 'Annual' ? sub.cost : sub.cost * 12;
@@ -92,7 +129,7 @@ export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChart
         return Array.from(map.entries())
             .map(([name, value]) => ({ name, value }))
             .sort((a, b) => b.value - a.value);
-    }, [subscriptions, invoices]);
+    }, [subscriptions, invoices, lineItems]);
 
     // Delay chart rendering until after layout is complete
     const [chartsReady, setChartsReady] = useState(false);
@@ -108,7 +145,17 @@ export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChart
     }, []);
 
     // Don't render if no data at all
-    if (subscriptions.length === 0 && invoices.length === 0) return null;
+    if (subscriptions.length === 0 && invoices.length === 0 && lineItems.length === 0) return null;
+
+    const chartTitle = lineItems.length > 0
+        ? 'Monthly Spend (Trailing 13 Months)'
+        : invoices.length > 0
+            ? 'Monthly Spend (Trailing 13 Months)'
+            : `Projected Cash Flow (${new Date().getFullYear()})`;
+
+    const categoryTitle = lineItems.length > 0 || invoices.length > 0
+        ? 'Total Spend by Vendor'
+        : 'Annual Spend by Category';
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -116,7 +163,7 @@ export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChart
             {/* Monthly Spend Bar Chart - Trailing 13 Months */}
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm min-w-0">
                 <h3 className="text-lg font-bold text-slate-900 mb-4">
-                    {invoices.length > 0 ? 'Monthly Spend (Trailing 13 Months)' : `Projected Cash Flow (${new Date().getFullYear()})`}
+                    {chartTitle}
                 </h3>
                 <div style={{ width: '100%', height: 300 }}>
                     {chartsReady && (
@@ -158,7 +205,7 @@ export function DashboardCharts({ subscriptions, invoices = [] }: DashboardChart
             {/* Spend Distribution by Vendor/Category */}
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm min-w-0">
                 <h3 className="text-lg font-bold text-slate-900 mb-4">
-                    {invoices.length > 0 ? 'Total Spend by Vendor' : 'Annual Spend by Category'}
+                    {categoryTitle}
                 </h3>
                 <div className="flex" style={{ width: '100%', height: 300, minHeight: 200 }}>
                     {/* Chart */}

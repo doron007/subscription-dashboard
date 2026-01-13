@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { SubscriptionService } from '@/types';
-import { Package, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { Package, Loader2, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { EditEntityModal } from '@/components/modals/EditEntityModal';
 
@@ -9,15 +9,72 @@ interface ServicesTabProps {
     subscriptionId: string;
 }
 
+type SortColumn = 'name' | 'quantity' | 'unitPrice' | 'status' | null;
+type SortDirection = 'asc' | 'desc' | null;
+
 export function ServicesTab({ subscriptionId }: ServicesTabProps) {
     const [services, setServices] = useState<SubscriptionService[]>([]);
     const [loading, setLoading] = useState(true);
+
+    // Sorting state
+    const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+    const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
     // Modal states
     const [editingService, setEditingService] = useState<SubscriptionService | null>(null);
     const [deletingService, setDeletingService] = useState<SubscriptionService | null>(null);
     const [cascadePreview, setCascadePreview] = useState<any>(null);
     const [deleteStep, setDeleteStep] = useState<'confirm' | 'deleting'>('confirm');
+
+    // Cycle through sort states: none -> asc -> desc -> none
+    const handleSort = useCallback((column: SortColumn) => {
+        if (sortColumn !== column) {
+            setSortColumn(column);
+            setSortDirection('asc');
+        } else if (sortDirection === 'asc') {
+            setSortDirection('desc');
+        } else if (sortDirection === 'desc') {
+            setSortColumn(null);
+            setSortDirection(null);
+        } else {
+            setSortDirection('asc');
+        }
+    }, [sortColumn, sortDirection]);
+
+    // Sorted services
+    const sortedServices = useMemo(() => {
+        if (!sortColumn || !sortDirection) return services;
+
+        return [...services].sort((a, b) => {
+            let aVal: any;
+            let bVal: any;
+
+            switch (sortColumn) {
+                case 'name':
+                    aVal = (a.name || '').toLowerCase();
+                    bVal = (b.name || '').toLowerCase();
+                    break;
+                case 'quantity':
+                    aVal = a.currentQuantity || 0;
+                    bVal = b.currentQuantity || 0;
+                    break;
+                case 'unitPrice':
+                    aVal = a.currentUnitPrice || 0;
+                    bVal = b.currentUnitPrice || 0;
+                    break;
+                case 'status':
+                    aVal = a.status || '';
+                    bVal = b.status || '';
+                    break;
+                default:
+                    return 0;
+            }
+
+            if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }, [services, sortColumn, sortDirection]);
 
     const loadServices = async () => {
         try {
@@ -102,15 +159,55 @@ export function ServicesTab({ subscriptionId }: ServicesTabProps) {
             <table className="w-full text-sm">
                 <thead>
                     <tr className="border-b border-slate-200 text-left">
-                        <th className="py-3 px-4 font-semibold text-slate-700">Service Name</th>
-                        <th className="py-3 px-4 font-semibold text-slate-700 text-center">Quantity</th>
-                        <th className="py-3 px-4 font-semibold text-slate-700 text-right">Unit Price</th>
-                        <th className="py-3 px-4 font-semibold text-slate-700 text-center">Status</th>
+                        <th
+                            className="py-3 px-4 font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                            onClick={() => handleSort('name')}
+                        >
+                            <div className="flex items-center gap-1">
+                                Service Name
+                                {sortColumn === 'name' && (
+                                    sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                )}
+                            </div>
+                        </th>
+                        <th
+                            className="py-3 px-4 font-semibold text-slate-700 text-center cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                            onClick={() => handleSort('quantity')}
+                        >
+                            <div className="flex items-center justify-center gap-1">
+                                Quantity
+                                {sortColumn === 'quantity' && (
+                                    sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                )}
+                            </div>
+                        </th>
+                        <th
+                            className="py-3 px-4 font-semibold text-slate-700 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                            onClick={() => handleSort('unitPrice')}
+                        >
+                            <div className="flex items-center justify-end gap-1">
+                                Unit Price
+                                {sortColumn === 'unitPrice' && (
+                                    sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                )}
+                            </div>
+                        </th>
+                        <th
+                            className="py-3 px-4 font-semibold text-slate-700 text-center cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                            onClick={() => handleSort('status')}
+                        >
+                            <div className="flex items-center justify-center gap-1">
+                                Status
+                                {sortColumn === 'status' && (
+                                    sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                )}
+                            </div>
+                        </th>
                         <th className="py-3 px-4 font-semibold text-slate-700 text-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {services.map((service) => (
+                    {sortedServices.map((service) => (
                         <tr key={service.id} className="border-b border-slate-100 hover:bg-slate-50 group">
                             <td className="py-3 px-4">
                                 <div className="font-medium text-slate-800">{service.name}</div>

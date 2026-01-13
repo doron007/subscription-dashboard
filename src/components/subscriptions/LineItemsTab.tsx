@@ -1,7 +1,7 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { InvoiceLineItem } from '@/types';
-import { ListChecks, Loader2, Search, Pencil, Trash2 } from 'lucide-react';
+import { ListChecks, Loader2, Search, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { EditEntityModal } from '@/components/modals/EditEntityModal';
@@ -16,10 +16,17 @@ interface ExtendedLineItem extends InvoiceLineItem {
     serviceName?: string;
 }
 
+type SortColumn = 'description' | 'invoice' | 'quantity' | 'unitPrice' | 'total' | null;
+type SortDirection = 'asc' | 'desc' | null;
+
 export function LineItemsTab({ subscriptionId }: LineItemsTabProps) {
     const [lineItems, setLineItems] = useState<ExtendedLineItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+
+    // Sorting state
+    const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+    const [sortDirection, setSortDirection] = useState<SortDirection>(null);
 
     // Modal states
     const [editingItem, setEditingItem] = useState<ExtendedLineItem | null>(null);
@@ -41,15 +48,74 @@ export function LineItemsTab({ subscriptionId }: LineItemsTabProps) {
         loadLineItems();
     }, [subscriptionId]);
 
-    const filteredItems = useMemo(() => {
-        if (!searchQuery.trim()) return lineItems;
-        const query = searchQuery.toLowerCase();
-        return lineItems.filter(item =>
-            item.description?.toLowerCase().includes(query) ||
-            item.serviceName?.toLowerCase().includes(query) ||
-            item.invoiceNumber?.toLowerCase().includes(query)
-        );
-    }, [lineItems, searchQuery]);
+    // Cycle through sort states: none -> asc -> desc -> none
+    const handleSort = useCallback((column: SortColumn) => {
+        if (sortColumn !== column) {
+            setSortColumn(column);
+            setSortDirection('asc');
+        } else if (sortDirection === 'asc') {
+            setSortDirection('desc');
+        } else if (sortDirection === 'desc') {
+            setSortColumn(null);
+            setSortDirection(null);
+        } else {
+            setSortDirection('asc');
+        }
+    }, [sortColumn, sortDirection]);
+
+    // Filtered and sorted items
+    const filteredAndSortedItems = useMemo(() => {
+        let result = lineItems;
+
+        // Filter by search
+        if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase();
+            result = result.filter(item =>
+                item.description?.toLowerCase().includes(query) ||
+                item.serviceName?.toLowerCase().includes(query) ||
+                item.invoiceNumber?.toLowerCase().includes(query)
+            );
+        }
+
+        // Sort if column and direction are set
+        if (sortColumn && sortDirection) {
+            result = [...result].sort((a, b) => {
+                let aVal: any;
+                let bVal: any;
+
+                switch (sortColumn) {
+                    case 'description':
+                        aVal = (a.description || '').toLowerCase();
+                        bVal = (b.description || '').toLowerCase();
+                        break;
+                    case 'invoice':
+                        aVal = (a.invoiceNumber || '').toLowerCase();
+                        bVal = (b.invoiceNumber || '').toLowerCase();
+                        break;
+                    case 'quantity':
+                        aVal = a.quantity || 0;
+                        bVal = b.quantity || 0;
+                        break;
+                    case 'unitPrice':
+                        aVal = a.unitPrice || 0;
+                        bVal = b.unitPrice || 0;
+                        break;
+                    case 'total':
+                        aVal = a.totalAmount || 0;
+                        bVal = b.totalAmount || 0;
+                        break;
+                    default:
+                        return 0;
+                }
+
+                if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        return result;
+    }, [lineItems, searchQuery, sortColumn, sortDirection]);
 
     const handleSave = async (data: any) => {
         if (!editingItem) return;
@@ -122,16 +188,66 @@ export function LineItemsTab({ subscriptionId }: LineItemsTabProps) {
                 <table className="w-full text-sm">
                     <thead>
                         <tr className="border-b border-slate-200 text-left">
-                            <th className="py-3 px-4 font-semibold text-slate-700">Description</th>
-                            <th className="py-3 px-4 font-semibold text-slate-700">Invoice</th>
-                            <th className="py-3 px-4 font-semibold text-slate-700 text-center">Qty</th>
-                            <th className="py-3 px-4 font-semibold text-slate-700 text-right">Unit Price</th>
-                            <th className="py-3 px-4 font-semibold text-slate-700 text-right">Total</th>
+                            <th
+                                className="py-3 px-4 font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('description')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Description
+                                    {sortColumn === 'description' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="py-3 px-4 font-semibold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('invoice')}
+                            >
+                                <div className="flex items-center gap-1">
+                                    Invoice
+                                    {sortColumn === 'invoice' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="py-3 px-4 font-semibold text-slate-700 text-center cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('quantity')}
+                            >
+                                <div className="flex items-center justify-center gap-1">
+                                    Qty
+                                    {sortColumn === 'quantity' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="py-3 px-4 font-semibold text-slate-700 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('unitPrice')}
+                            >
+                                <div className="flex items-center justify-end gap-1">
+                                    Unit Price
+                                    {sortColumn === 'unitPrice' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
+                            <th
+                                className="py-3 px-4 font-semibold text-slate-700 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                onClick={() => handleSort('total')}
+                            >
+                                <div className="flex items-center justify-end gap-1">
+                                    Total
+                                    {sortColumn === 'total' && (
+                                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                                    )}
+                                </div>
+                            </th>
                             <th className="py-3 px-4 font-semibold text-slate-700 text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {filteredItems.map((item) => (
+                        {filteredAndSortedItems.map((item) => (
                             <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 group">
                                 <td className="py-3 px-4">
                                     <div className="font-medium text-slate-800">{item.description}</div>
@@ -179,10 +295,10 @@ export function LineItemsTab({ subscriptionId }: LineItemsTabProps) {
             {/* Summary */}
             <div className="p-4 bg-slate-50 rounded-lg flex justify-between items-center text-sm">
                 <span className="text-slate-600">
-                    {filteredItems.length} of {lineItems.length} line item(s)
+                    {filteredAndSortedItems.length} of {lineItems.length} line item(s)
                 </span>
                 <span className="font-medium text-slate-800">
-                    Total: {formatCurrency(filteredItems.reduce((sum, item) => sum + item.totalAmount, 0))}
+                    Total: {formatCurrency(filteredAndSortedItems.reduce((sum, item) => sum + item.totalAmount, 0))}
                 </span>
             </div>
 

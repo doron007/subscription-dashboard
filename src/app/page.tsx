@@ -27,23 +27,33 @@ interface InvoiceWithVendor extends Invoice {
   vendorName?: string;
 }
 
+interface LineItemWithBillingMonth {
+  id: string;
+  totalAmount: number;
+  billingMonth: string;
+  vendorName: string;
+}
+
 export default function Dashboard() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [vendors, setVendors] = useState<VendorWithStats[]>([]);
   const [invoices, setInvoices] = useState<InvoiceWithVendor[]>([]);
+  const [lineItems, setLineItems] = useState<LineItemWithBillingMonth[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [subsData, vendorsData, invoicesData] = await Promise.all([
+        const [subsData, vendorsData, invoicesData, lineItemsData] = await Promise.all([
           subscriptionService.getAll(),
           subscriptionService.getVendors().catch(() => []),
-          subscriptionService.getInvoices().catch(() => [])
+          subscriptionService.getInvoices().catch(() => []),
+          subscriptionService.getAllLineItems().catch(() => [])
         ]);
         setSubscriptions(subsData);
         setVendors(vendorsData);
         setInvoices(invoicesData);
+        setLineItems(lineItemsData);
       } catch (err) {
         console.error("Failed to load dashboard data", err);
       } finally {
@@ -224,7 +234,7 @@ export default function Dashboard() {
         )}
 
         {/* Charts */}
-        <DashboardCharts subscriptions={subscriptions} invoices={invoices} />
+        <DashboardCharts subscriptions={subscriptions} invoices={invoices} lineItems={lineItems} />
 
         {/* Main Content */}
         <SubscriptionTable subscriptions={subscriptions} limit={5} enableSearch={true} />
