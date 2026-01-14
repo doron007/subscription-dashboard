@@ -50,33 +50,24 @@ interface LineItemWithInfo {
     isManualOverride?: boolean;
 }
 
-// Extract clean service name from description
+// Extract clean service name from description by stripping date suffixes
+// This matches the logic used during import for consistency
 function extractServiceName(description: string): string {
     if (!description) return 'Other';
 
-    // Common patterns to extract service names
-    if (description.includes('Azure')) return 'Microsoft Azure';
-    if (description.includes('Office 365 E3')) return 'Office 365 E3';
-    if (description.includes('Office 365 Extra File Storage')) return 'Office 365 File Storage';
-    if (description.includes('Office 365')) return 'Office 365';
-    if (description.includes('Microsoft 365')) return 'Microsoft 365';
-    if (description.includes('Dynamics')) return 'Dynamics 365';
-    if (description.includes('Power BI')) return 'Power BI';
-    if (description.includes('Teams')) return 'Microsoft Teams';
-    if (description.includes('SharePoint')) return 'SharePoint';
-    if (description.includes('Exchange')) return 'Exchange Online';
-    if (description.includes('Intune')) return 'Microsoft Intune';
-    if (description.includes('Defender')) return 'Microsoft Defender';
-    if (description.includes('Windows')) return 'Windows';
-    if (description.includes('Visual Studio')) return 'Visual Studio';
+    let cleaned = description.trim();
 
-    // If no pattern matches, try to extract first meaningful part
-    const parts = description.split(' - ');
-    if (parts.length > 1) {
-        return parts[0].replace(/^MSFT CSP\s*/i, '').trim() || 'Other Services';
-    }
+    // Remove date range suffix pattern: "M/D/YY-M/D/YY" or "MM/DD/YYYY-MM/DD/YYYY"
+    // This handles patterns like "10/1/25-10/31/25" at the end
+    cleaned = cleaned.replace(/\s+\d{1,2}\/\d{1,2}\/\d{2,4}-\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/, '');
 
-    return description.slice(0, 30) + (description.length > 30 ? '...' : '');
+    // Remove standalone date patterns at end (single date like "10/1/25")
+    cleaned = cleaned.replace(/\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/, '');
+
+    // Normalize whitespace
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+    return cleaned || 'Other';
 }
 
 export default function ReportsPage() {

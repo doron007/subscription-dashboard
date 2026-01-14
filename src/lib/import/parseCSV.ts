@@ -134,6 +134,52 @@ export function normalizeServiceName(description: string): string {
 }
 
 /**
+ * Extract clean service name by stripping date suffixes from description
+ * "Azure Consumption-Azure plan Usage 10/1/25-10/31/25" → "Azure Consumption-Azure plan Usage"
+ * "Microsoft Support Hours 10/1/25-10/31/25" → "Microsoft Support Hours"
+ */
+export function extractCleanServiceName(description: string): string {
+    if (!description) return 'Unknown Service';
+
+    let cleaned = description.trim();
+
+    // Remove date range suffix pattern: "M/D/YY-M/D/YY" or "MM/DD/YYYY-MM/DD/YYYY"
+    // This handles patterns like "10/1/25-10/31/25" at the end
+    cleaned = cleaned.replace(/\s+\d{1,2}\/\d{1,2}\/\d{2,4}-\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/, '');
+
+    // Remove standalone date patterns at end (single date like "10/1/25")
+    cleaned = cleaned.replace(/\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/, '');
+
+    // Normalize whitespace
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+    return cleaned || 'Unknown Service';
+}
+
+/**
+ * Normalize a service name for fuzzy matching
+ * - Lowercase
+ * - Remove extra whitespace
+ * - Fix common typos
+ */
+export function normalizeForMatching(name: string): string {
+    if (!name) return '';
+
+    let normalized = name
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // Fix common typos
+    normalized = normalized.replace(/microsoft 65\b/g, 'microsoft 365');
+    normalized = normalized.replace(/microsft\b/g, 'microsoft');
+    normalized = normalized.replace(/azrue\b/g, 'azure');
+    normalized = normalized.replace(/consumtion\b/g, 'consumption');
+
+    return normalized;
+}
+
+/**
  * Parse raw CSV rows into structured line items
  */
 export function parseCSVRows(rows: RawCSVRow[]): ParsedLineItem[] {

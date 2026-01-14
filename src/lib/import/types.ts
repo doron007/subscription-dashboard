@@ -5,6 +5,22 @@ export type MergeStrategy = 'csv_wins' | 'keep_existing' | 'skip';
 // How to handle voided (not yet processed by accounting) invoices
 export type VoidedAction = 'import_unpaid' | 'skip';
 
+// Smart Import Format Detection
+export type CSVFormatType = 'invoice' | 'transaction' | 'unknown';
+
+export interface SmartImportMeta {
+    formatType: CSVFormatType;
+    confidence: number;
+    reasoning: string;
+    detectedVendors: string[];
+    dateRange: {
+        earliest: string;
+        latest: string;
+    };
+    totalAmount: number;
+    rowCount: number;
+}
+
 // Raw CSV row from SAP export
 // Note: SAP headers may have varying whitespace, so we use index signature for flexibility
 export interface RawCSVRow {

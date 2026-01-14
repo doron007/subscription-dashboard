@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Subscription, SubscriptionStatus, BillingCycle, PaymentMethod, Employee, Device, Assignment, Vendor, SubscriptionService, Invoice, InvoiceLineItem } from '../types';
+import { normalizeForMatching } from './import/parseCSV';
 
 export const db = {
     // --- Phase 6: New Entities ---
@@ -285,13 +286,35 @@ export const db = {
         },
 
         upsert: async (service: Partial<SubscriptionService>, invoiceDate?: Date): Promise<SubscriptionService> => {
-            // Find-or-Create pattern since we don't have a unique constraint on (subscription_id, name)
-            const { data: existing } = await supabase
+            // Find-or-Create pattern with fuzzy matching for service names
+            // First, get all services for this subscription to do fuzzy matching
+            const { data: existingServices } = await supabase
                 .from('sub_subscription_services')
                 .select('*')
-                .eq('subscription_id', service.subscriptionId)
-                .eq('name', service.name)
-                .maybeSingle();
+                .eq('subscription_id', service.subscriptionId);
+
+            // Find best match using normalized comparison
+            const normalizedNewName = normalizeForMatching(service.name || '');
+            let existing = null;
+
+            if (existingServices && existingServices.length > 0) {
+                // First try exact match (case-insensitive)
+                existing = existingServices.find(s =>
+                    normalizeForMatching(s.name) === normalizedNewName
+                );
+
+                // If no exact match, try fuzzy matching for very close names
+                if (!existing && normalizedNewName) {
+                    existing = existingServices.find(s => {
+                        const existingNormalized = normalizeForMatching(s.name);
+                        // Check if one contains the other (handles slight variations)
+                        return existingNormalized === normalizedNewName ||
+                            (existingNormalized.length > 10 && normalizedNewName.length > 10 &&
+                             (existingNormalized.includes(normalizedNewName) ||
+                              normalizedNewName.includes(existingNormalized)));
+                    });
+                }
+            }
 
             if (existing) {
                 // Only update if this invoice is more recent than the service's last update

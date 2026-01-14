@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { parseImportCSV, extractPeriodFromDescription } from '@/lib/import/parseCSV';
+import { parseImportCSV, extractPeriodFromDescription, extractCleanServiceName } from '@/lib/import/parseCSV';
+import { analyzeCSVFormat, transformToStandard, type StandardLineItem } from '@/lib/import/smartMapper';
 import type {
     ImportExecutionResult,
     ImportDecision,
     ParsedInvoice,
+    ParsedLineItem,
     MergeStrategy,
     ImportAction,
     LineItemAction
@@ -59,8 +61,61 @@ export async function POST(request: Request) {
 
         console.log(`[ImportExecute] Executing import with ${decisions?.length || 0} decisions`);
 
-        // Parse CSV data
-        const { invoices } = parseImportCSV(csvData);
+        // Get headers and detect format
+        const headers = csvData.length > 0 ? Object.keys(csvData[0]) : [];
+        const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+        const isLegacyFormat = lowerHeaders.includes('vendor') &&
+            lowerHeaders.includes('invoice') &&
+            lowerHeaders.some(h => h.includes('line item'));
+
+        let invoices: ParsedInvoice[];
+
+        if (isLegacyFormat) {
+            console.log(`[ImportExecute] Using legacy PBS/SAP parser`);
+            const parsed = parseImportCSV(csvData);
+            invoices = parsed.invoices;
+        } else {
+            console.log(`[ImportExecute] Using smart mapper for non-legacy format`);
+            // Use smart mapping
+            const mappingResult = await analyzeCSVFormat(headers, csvData.slice(0, 10));
+            console.log(`[ImportExecute] Format: ${mappingResult.formatType} (${mappingResult.confidence})`);
+
+            const standardItems = transformToStandard(csvData, mappingResult.mapping, mappingResult.transformRules);
+
+            // Convert to ParsedInvoice format
+            const invoiceMap = new Map<string, ParsedInvoice>();
+            for (const item of standardItems) {
+                const key = `${item.vendor}|${item.invoiceNumber}`;
+                if (!invoiceMap.has(key)) {
+                    invoiceMap.set(key, {
+                        vendor: item.vendor,
+                        invoiceNumber: item.invoiceNumber,
+                        invoiceDate: item.invoiceDate,
+                        totalAmount: 0,
+                        isVoided: item.isVoided,
+                        paidDate: item.paidDate,
+                        lineItems: []
+                    });
+                }
+                const invoice = invoiceMap.get(key)!;
+                invoice.totalAmount += item.totalPrice;
+                invoice.lineItems.push({
+                    vendor: item.vendor,
+                    invoiceNumber: item.invoiceNumber,
+                    invoiceDate: item.invoiceDate,
+                    serviceMonth: item.serviceMonth,
+                    description: item.description,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    totalPrice: item.totalPrice,
+                    paidDate: item.paidDate,
+                    isVoided: item.isVoided,
+                    lineItemKey: `${item.invoiceNumber}|${item.description}|${item.serviceMonth}`
+                });
+            }
+            invoices = Array.from(invoiceMap.values());
+            console.log(`[ImportExecute] Converted ${standardItems.length} items to ${invoices.length} invoices`);
+        }
 
         // Build decision map for quick lookup
         const decisionMap = new Map<string, ImportDecision>();
@@ -199,8 +254,9 @@ export async function POST(request: Request) {
                         continue;
                     }
 
-                    // Extract service name from description
-                    const serviceName = item.description;
+                    // Extract clean service name from description (strips date suffixes)
+                    // e.g., "Azure Consumption-Azure plan Usage 10/1/25-10/31/25" → "Azure Consumption-Azure plan Usage"
+                    const serviceName = extractCleanServiceName(item.description);
 
                     // Aggregate for service creation
                     if (serviceAggregates.has(serviceName)) {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { parseImportCSV, extractPeriodFromDescription } from '@/lib/import/parseCSV';
+import { analyzeCSVFormat, transformToStandard, groupTransactionsAsInvoices, type StandardLineItem } from '@/lib/import/smartMapper';
 import type {
     ImportAnalysis,
     InvoiceDiff,
@@ -8,7 +9,8 @@ import type {
     FieldDiff,
     DiffType,
     ParsedInvoice,
-    ParsedLineItem
+    ParsedLineItem,
+    SmartImportMeta
 } from '@/lib/import/types';
 
 // Tolerance for comparing amounts (cents)
@@ -264,6 +266,67 @@ async function analyzeInvoice(
     };
 }
 
+/**
+ * Convert StandardLineItem array to ParsedInvoice format for analysis
+ */
+function standardItemsToParsedInvoices(items: StandardLineItem[]): { invoices: ParsedInvoice[]; vendors: string[] } {
+    // Group by invoice number
+    const invoiceMap = new Map<string, ParsedInvoice>();
+    const vendorSet = new Set<string>();
+
+    for (const item of items) {
+        vendorSet.add(item.vendor);
+
+        const key = `${item.vendor}|${item.invoiceNumber}`;
+
+        if (!invoiceMap.has(key)) {
+            invoiceMap.set(key, {
+                vendor: item.vendor,
+                invoiceNumber: item.invoiceNumber,
+                invoiceDate: item.invoiceDate,
+                totalAmount: 0,
+                isVoided: item.isVoided,
+                paidDate: item.paidDate,
+                lineItems: []
+            });
+        }
+
+        const invoice = invoiceMap.get(key)!;
+        invoice.totalAmount += item.totalPrice;
+
+        // Convert to ParsedLineItem
+        invoice.lineItems.push({
+            vendor: item.vendor,
+            invoiceNumber: item.invoiceNumber,
+            invoiceDate: item.invoiceDate,
+            serviceMonth: item.serviceMonth,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice: item.totalPrice,
+            paidDate: item.paidDate,
+            isVoided: item.isVoided,
+            lineItemKey: `${item.invoiceNumber}|${item.description}|${item.serviceMonth}|${item.quantity}|${item.unitPrice}|${item.totalPrice}`
+        });
+    }
+
+    return {
+        invoices: Array.from(invoiceMap.values()),
+        vendors: Array.from(vendorSet)
+    };
+}
+
+/**
+ * Check if CSV appears to be in the legacy SAP/PBS format
+ */
+function isLegacyFormat(headers: string[]): boolean {
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+    // Legacy format has specific SAP-style columns
+    return lowerHeaders.includes('vendor') &&
+        lowerHeaders.includes('invoice') &&
+        lowerHeaders.some(h => h.includes('line item'));
+}
+
 export async function POST(request: Request) {
     try {
         const body = await request.json();
@@ -278,8 +341,56 @@ export async function POST(request: Request) {
 
         console.log(`[ImportAnalyze] Analyzing ${csvData.length} rows from ${filename}`);
 
-        // Parse CSV data
-        const { lineItems, invoices, vendors } = parseImportCSV(csvData);
+        // Get headers from first row
+        const headers = csvData.length > 0 ? Object.keys(csvData[0]) : [];
+        console.log(`[ImportAnalyze] CSV Headers: ${headers.join(', ')}`);
+
+        let invoices: ParsedInvoice[];
+        let vendors: string[];
+        let lineItems: ParsedLineItem[];
+        let smartMeta: SmartImportMeta | null = null;
+
+        // Check if this is the legacy PBS/SAP format for backwards compatibility
+        if (isLegacyFormat(headers)) {
+            console.log(`[ImportAnalyze] Detected legacy SAP/PBS format, using direct parser`);
+            const parsed = parseImportCSV(csvData);
+            lineItems = parsed.lineItems;
+            invoices = parsed.invoices;
+            vendors = parsed.vendors;
+        } else {
+            // Use smart mapping for other formats
+            console.log(`[ImportAnalyze] Using smart AI-powered mapping`);
+
+            // Analyze format using AI
+            const mappingResult = await analyzeCSVFormat(headers, csvData.slice(0, 10));
+            console.log(`[ImportAnalyze] Format detected: ${mappingResult.formatType} (confidence: ${mappingResult.confidence})`);
+            console.log(`[ImportAnalyze] Reasoning: ${mappingResult.reasoning}`);
+
+            // Transform to standard format
+            const standardItems = transformToStandard(csvData, mappingResult.mapping, mappingResult.transformRules);
+            console.log(`[ImportAnalyze] Transformed ${standardItems.length} items to standard format`);
+
+            // Convert to parsed format for analysis
+            const converted = standardItemsToParsedInvoices(standardItems);
+            invoices = converted.invoices;
+            vendors = converted.vendors;
+            lineItems = invoices.flatMap(inv => inv.lineItems);
+
+            // Build smart import metadata
+            const dates = standardItems.map(i => i.invoiceDate).filter(Boolean).sort();
+            smartMeta = {
+                formatType: mappingResult.formatType,
+                confidence: mappingResult.confidence,
+                reasoning: mappingResult.reasoning,
+                detectedVendors: vendors,
+                dateRange: {
+                    earliest: dates[0] || '',
+                    latest: dates[dates.length - 1] || ''
+                },
+                totalAmount: standardItems.reduce((sum, i) => sum + i.totalPrice, 0),
+                rowCount: csvData.length
+            };
+        }
 
         console.log(`[ImportAnalyze] Parsed ${invoices.length} invoices, ${lineItems.length} line items`);
 
@@ -340,16 +451,20 @@ export async function POST(request: Request) {
             removedLineItems: invoiceDiffs.reduce((sum, inv) => sum + inv.stats.removedLineItems, 0)
         };
 
-        const analysis: ImportAnalysis = {
+        const analysis: ImportAnalysis & { smartMeta?: SmartImportMeta } = {
             filename: filename || 'import.csv',
             analyzedAt: new Date().toISOString(),
             summary,
             vendors: vendorAnalysis,
             invoiceDiffs,
-            warnings
+            warnings,
+            ...(smartMeta && { smartMeta })
         };
 
         console.log(`[ImportAnalyze] Analysis complete:`, summary);
+        if (smartMeta) {
+            console.log(`[ImportAnalyze] Smart import meta:`, smartMeta);
+        }
 
         return NextResponse.json(analysis);
     } catch (error) {
