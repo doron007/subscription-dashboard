@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { Subscription, Invoice, Vendor } from '@/types';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Download, TrendingUp, Maximize2, Minimize2, ExternalLink } from 'lucide-react';
+import { Download, TrendingUp, Maximize2, Minimize2, ExternalLink, Filter, X, Search } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from 'recharts';
 import Papa from 'papaparse';
 import {
@@ -84,6 +84,12 @@ export default function ReportsPage() {
     const [startDate, setStartDate] = useState<string>('');
     const [endDate, setEndDate] = useState<string>('');
 
+    // Strategic Filters
+    const [selectedMonth, setSelectedMonth] = useState<string>('');
+    const [selectedVendor, setSelectedVendor] = useState<string>('');
+    const [selectedService, setSelectedService] = useState<string>('');
+    const [searchQuery, setSearchQuery] = useState<string>('');
+
     // UI State
     const [expandedChart, setExpandedChart] = useState<ExpandedChart>(null);
     const [chartsReady, setChartsReady] = useState(false);
@@ -99,6 +105,32 @@ export default function ReportsPage() {
         return months;
     }, []);
 
+    // Derived lists for filters (based on all data)
+    const availableMonths = useMemo(() => {
+        const months = new Set<string>();
+        lineItems.forEach(item => {
+            if (item.billingMonth) {
+                months.add(item.billingMonth.substring(0, 7)); // YYYY-MM
+            }
+        });
+        return Array.from(months).sort().reverse();
+    }, [lineItems]);
+
+    const availableVendors = useMemo(() => {
+        const vendors = new Set<string>();
+        lineItems.forEach(item => item.vendorName && vendors.add(item.vendorName));
+        return Array.from(vendors).sort();
+    }, [lineItems]);
+
+    const availableServices = useMemo(() => {
+        const services = new Set<string>();
+        lineItems.forEach(item => {
+            const service = extractServiceName(item.description);
+            if (service) services.add(service);
+        });
+        return Array.from(services).sort();
+    }, [lineItems]);
+
     // Apply quick filter
     const applyQuickFilter = useCallback((filter: QuickFilter) => {
         setQuickFilter(filter);
@@ -109,6 +141,8 @@ export default function ReportsPage() {
                 // Don't set dates - we'll use getTTMMonths directly
                 setStartDate('');
                 setEndDate('');
+                // Reset month filter when changing quick filter as it might conflict
+                setSelectedMonth('');
                 break;
             case 'Last Year':
                 setStartDate(format(startOfYear(subYears(now, 1)), 'yyyy-MM-dd'));
@@ -195,32 +229,64 @@ export default function ReportsPage() {
         return months;
     }, [quickFilter, startDate, endDate, getTTMMonths]);
 
-    // Get unique keys for stacking based on groupBy selection AND current month range
+    // Apply all filters to line items
+    const filteredLineItems = useMemo(() => {
+        return lineItems.filter(item => {
+            if (!item.billingMonth) return false;
+
+            // 1. Time Range Filter
+            const itemBillingDate = parseISO(item.billingMonth);
+            const inTimeRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
+            if (!inTimeRange) return false;
+
+            // 2. Month Filter
+            if (selectedMonth && item.billingMonth.substring(0, 7) !== selectedMonth) return false;
+
+            // 3. Vendor Filter
+            if (selectedVendor && item.vendorName !== selectedVendor) return false;
+
+            // 4. Service Filter
+            if (selectedService) {
+                const serviceName = extractServiceName(item.description);
+                if (serviceName !== selectedService) return false;
+            }
+
+            // 5. Smart Text Search
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                const serviceName = extractServiceName(item.description).toLowerCase();
+                const vendor = (item.vendorName || '').toLowerCase();
+                const desc = (item.description || '').toLowerCase();
+                const monthStr = item.billingMonth; // YYYY-MM-DD
+                const monthFormatted = format(parseISO(item.billingMonth), 'MMM yyyy').toLowerCase(); // e.g. "oct 2023"
+
+                const matches =
+                    vendor.includes(query) ||
+                    serviceName.includes(query) ||
+                    desc.includes(query) ||
+                    monthStr.includes(query) ||
+                    monthFormatted.includes(query);
+
+                if (!matches) return false;
+            }
+
+            return true;
+        });
+    }, [lineItems, monthRange, selectedMonth, selectedVendor, selectedService, searchQuery]);
+
+    // Get unique keys for stacking based on groupBy selection AND current filtered data
     const stackKeys = useMemo(() => {
         const keyTotals = new Map<string, number>();
 
-        if (groupBy === 'Service' && lineItems.length > 0) {
-            // Filter and group line items by service within the selected time range
-            // Use billingMonth (resolved period) instead of invoiceDate
-            lineItems.forEach(item => {
-                if (!item.billingMonth) return;
-                const itemBillingDate = parseISO(item.billingMonth);
-                const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
-                if (inRange) {
-                    const key = extractServiceName(item.description);
-                    keyTotals.set(key, (keyTotals.get(key) || 0) + item.totalAmount);
-                }
+        if (groupBy === 'Service') {
+            filteredLineItems.forEach(item => {
+                const key = extractServiceName(item.description);
+                keyTotals.set(key, (keyTotals.get(key) || 0) + item.totalAmount);
             });
         } else {
-            // For vendor grouping, aggregate line items by vendor using their billing months
-            lineItems.forEach(item => {
-                if (!item.billingMonth) return;
-                const itemBillingDate = parseISO(item.billingMonth);
-                const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
-                if (inRange) {
-                    const key = item.vendorName || 'Unknown';
-                    keyTotals.set(key, (keyTotals.get(key) || 0) + item.totalAmount);
-                }
+            filteredLineItems.forEach(item => {
+                const key = item.vendorName || 'Unknown';
+                keyTotals.set(key, (keyTotals.get(key) || 0) + item.totalAmount);
             });
         }
 
@@ -228,7 +294,7 @@ export default function ReportsPage() {
         return Array.from(keyTotals.entries())
             .sort((a, b) => b[1] - a[1])
             .map(([key]) => key);
-    }, [lineItems, groupBy, monthRange]);
+    }, [filteredLineItems, groupBy]);
 
     // Calculate stacked trend data
     const stackedTrendData: StackedTrendPoint[] = useMemo(() => {
@@ -246,8 +312,8 @@ export default function ReportsPage() {
                 point[key] = 0;
             });
 
-            // Always use line items with resolved billingMonth for accurate period allocation
-            lineItems.forEach(item => {
+            // Use filtered items
+            filteredLineItems.forEach(item => {
                 if (!item.billingMonth) return;
                 const itemBillingDate = parseISO(item.billingMonth);
                 if (isSameMonth(itemBillingDate, month)) {
@@ -261,25 +327,59 @@ export default function ReportsPage() {
 
             return point;
         });
-    }, [monthRange, lineItems, stackKeys, groupBy]);
+    }, [monthRange, filteredLineItems, stackKeys, groupBy]);
 
-    // Aggregated breakdown data
-    const aggregatedData: AggregatedData[] = useMemo(() => {
+    // Data for the detailed month view (Pareto chart when a month is selected)
+    const monthBreakdownData: AggregatedData[] = useMemo(() => {
+        if (!selectedMonth) return [];
+
         const map = new Map<string, number>();
         let totalPeriodCost = 0;
 
-        // Always use line items with resolved billingMonth for accurate period allocation
-        lineItems.forEach(item => {
-            if (!item.billingMonth) return;
-            const itemBillingDate = parseISO(item.billingMonth);
-            const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
-            if (inRange) {
-                const key = groupBy === 'Service'
-                    ? extractServiceName(item.description)
-                    : (item.vendorName || 'Unknown Vendor');
-                map.set(key, (map.get(key) || 0) + item.totalAmount);
-                totalPeriodCost += item.totalAmount;
+        // Filter items specifically for the selected month
+        // We go back to raw lineItems but apply other filters (Vendor/Service) if they exist
+        // logic: if user clicked a month, we want to see breakdown of THAT month
+        // but still respect existing vendor/service filters if any were applied (though usually drilldown clears them)
+        const itemsForMonth = lineItems.filter(item => {
+            if (!item.billingMonth) return false;
+
+            // 1. Month match
+            if (item.billingMonth.substring(0, 7) !== selectedMonth) return false;
+
+            // 2. Vendor Filter (if active)
+            if (selectedVendor && item.vendorName !== selectedVendor) return false;
+
+            // 3. Service Filter (if active)
+            if (selectedService) {
+                const serviceName = extractServiceName(item.description);
+                if (serviceName !== selectedService) return false;
             }
+
+            // 4. Smart Search (if active)
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                const serviceName = extractServiceName(item.description).toLowerCase();
+                const vendor = (item.vendorName || '').toLowerCase();
+                const desc = (item.description || '').toLowerCase();
+                // We don't need to check billingMonth here since we already filtered by selectedMonth above
+
+                const matches =
+                    vendor.includes(query) ||
+                    serviceName.includes(query) ||
+                    desc.includes(query);
+
+                if (!matches) return false;
+            }
+
+            return true;
+        });
+
+        itemsForMonth.forEach(item => {
+            const key = groupBy === 'Service'
+                ? extractServiceName(item.description)
+                : (item.vendorName || 'Unknown Vendor');
+            map.set(key, (map.get(key) || 0) + item.totalAmount);
+            totalPeriodCost += item.totalAmount;
         });
 
         return Array.from(map.entries())
@@ -290,7 +390,31 @@ export default function ReportsPage() {
                 color: COLORS[index % COLORS.length]
             }))
             .sort((a, b) => b.cost - a.cost);
-    }, [lineItems, monthRange, groupBy]);
+    }, [lineItems, selectedMonth, selectedVendor, selectedService, groupBy, searchQuery]);
+
+    // Aggregated breakdown data
+    const aggregatedData: AggregatedData[] = useMemo(() => {
+        const map = new Map<string, number>();
+        let totalPeriodCost = 0;
+
+        // Use filtered items
+        filteredLineItems.forEach(item => {
+            const key = groupBy === 'Service'
+                ? extractServiceName(item.description)
+                : (item.vendorName || 'Unknown Vendor');
+            map.set(key, (map.get(key) || 0) + item.totalAmount);
+            totalPeriodCost += item.totalAmount;
+        });
+
+        return Array.from(map.entries())
+            .map(([name, cost], index) => ({
+                name,
+                cost,
+                percentage: totalPeriodCost ? (cost / totalPeriodCost) * 100 : 0,
+                color: COLORS[index % COLORS.length]
+            }))
+            .sort((a, b) => b.cost - a.cost);
+    }, [filteredLineItems, groupBy]);
 
     // Color map for consistent colors
     const colorMap = useMemo(() => {
@@ -511,14 +635,98 @@ export default function ReportsPage() {
                     </div>
                 </div>
 
+                {/* Filters Row */}
+                <div className="flex flex-wrap items-center gap-3 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-2 text-slate-500 mr-2">
+                        <Filter className="w-4 h-4" />
+                        <span className="text-xs font-semibold uppercase tracking-wider">Filters:</span>
+                    </div>
+
+                    {/* Smart Search Input */}
+                    <div className="relative group">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 group-focus-within:text-indigo-500 transition-colors" />
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Search vendor, service..."
+                            className="pl-9 pr-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-slate-50 text-slate-700 placeholder:text-slate-400 focus:ring-indigo-500 focus:border-indigo-500 w-48 transition-all focus:w-64 focus:bg-white"
+                        />
+                    </div>
+
+                    {/* Month Filter */}
+                    <select
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        className={`text-xs font-medium rounded-lg border py-1.5 pl-2.5 pr-8 focus:ring-indigo-500 focus:border-indigo-500 ${selectedMonth ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}
+                    >
+                        <option value="">All Months</option>
+                        {availableMonths.map(month => (
+                            <option key={month} value={month}>{format(parseISO(month + '-01'), 'MMM yyyy')}</option>
+                        ))}
+                    </select>
+
+                    {/* Vendor Filter */}
+                    <select
+                        value={selectedVendor}
+                        onChange={(e) => {
+                            setSelectedVendor(e.target.value);
+                        }}
+                        className={`text-xs font-medium rounded-lg border py-1.5 pl-2.5 pr-8 focus:ring-indigo-500 focus:border-indigo-500 ${selectedVendor ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}
+                        style={{ maxWidth: '200px' }}
+                    >
+                        <option value="">All Vendors</option>
+                        {availableVendors.map(vendor => (
+                            <option key={vendor} value={vendor}>{vendor}</option>
+                        ))}
+                    </select>
+
+                    {/* Service Filter */}
+                    <select
+                        value={selectedService}
+                        onChange={(e) => setSelectedService(e.target.value)}
+                        className={`text-xs font-medium rounded-lg border py-1.5 pl-2.5 pr-8 focus:ring-indigo-500 focus:border-indigo-500 ${selectedService ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}
+                        style={{ maxWidth: '200px' }}
+                    >
+                        <option value="">All Services</option>
+                        {availableServices.map(service => (
+                            <option key={service} value={service}>{service}</option>
+                        ))}
+                    </select>
+
+                    {/* Clear Filters Button */}
+                    {(selectedMonth || selectedVendor || selectedService || searchQuery) && (
+                        <button
+                            onClick={() => {
+                                setSelectedMonth('');
+                                setSelectedVendor('');
+                                setSelectedService('');
+                                setSearchQuery('');
+                            }}
+                            className="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded-lg ml-auto transition-colors"
+                        >
+                            <X className="w-3.5 h-3.5" />
+                            Clear
+                        </button>
+                    )}
+                </div>
+
                 {/* Stacked Trend Chart */}
                 <div className={`bg-white rounded-xl border border-slate-200 shadow-sm transition-all duration-300 ${expandedChart === 'Trend' ? 'fixed inset-4 z-50 p-6' : 'p-6'}`}>
                     <div className="flex items-center justify-between mb-4">
                         <div>
-                            <h3 className="text-sm font-bold text-slate-900">Monthly Spend by {groupBy}</h3>
+                            <h3 className="text-sm font-bold text-slate-900">
+                                {selectedMonth
+                                    ? `Top Spending ${groupBy}s in ${format(parseISO(selectedMonth + '-01'), 'MMMM yyyy')}`
+                                    : `Monthly Spend by ${groupBy}`
+                                }
+                            </h3>
                             <p className="text-xs text-slate-500 mt-0.5">
-                                {quickFilter === 'TTM' ? 'Trailing 12 months (excl. current month)' : `${format(monthRange[0] || new Date(), 'MMM yyyy')} - ${format(monthRange[monthRange.length - 1] || new Date(), 'MMM yyyy')}`}
-                                {' • '}Total: <span className="font-semibold text-slate-700">${totalCost.toLocaleString()}</span>
+                                {selectedMonth
+                                    ? 'Click on a bar to filter by that item, or clear the month filter to go back.'
+                                    : (quickFilter === 'TTM' ? 'Trailing 12 months (excl. current month)' : `${format(monthRange[0] || new Date(), 'MMM yyyy')} - ${format(monthRange[monthRange.length - 1] || new Date(), 'MMM yyyy')}`)
+                                }
+                                {' • '}Total: <span className="font-semibold text-slate-700">${(selectedMonth ? monthBreakdownData.reduce((sum, d) => sum + d.cost, 0) : totalCost).toLocaleString()}</span>
                             </p>
                         </div>
                         <button
@@ -532,36 +740,96 @@ export default function ReportsPage() {
                     <div style={{ width: '100%', height: expandedChart === 'Trend' ? 'calc(100% - 80px)' : 350 }}>
                         {chartsReady && (
                             <ResponsiveContainer width="100%" height={expandedChart === 'Trend' ? '100%' : 350} minWidth={0} minHeight={0}>
-                                <BarChart data={stackedTrendData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                                    <XAxis
-                                        dataKey="date"
-                                        axisLine={false}
-                                        tickLine={false}
-                                        tick={{ fill: '#64748b', fontSize: 11 }}
-                                        interval={0}
-                                        angle={-45}
-                                        textAnchor="end"
-                                        height={60}
-                                    />
-                                    <YAxis
-                                        axisLine={false}
-                                        tickLine={false}
-                                        tick={{ fill: '#64748b', fontSize: 11 }}
-                                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                                    />
-                                    <Tooltip content={<CustomTooltip />} />
-                                    {/* stackKeys sorted largest-first renders largest at bottom of stack */}
-                                    {stackKeys.map((key, index) => (
-                                        <Bar
-                                            key={key}
-                                            dataKey={key}
-                                            stackId="spend"
-                                            fill={colorMap[key] || '#8b5cf6'}
-                                            radius={index === stackKeys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                                {selectedMonth ? (
+                                    /* Month Selected: Show Pareto Chart (Ranked Bar Chart) */
+                                    <BarChart data={monthBreakdownData} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                                        <XAxis type="number" hide />
+                                        <YAxis
+                                            dataKey="name"
+                                            type="category"
+                                            width={150}
+                                            tick={{ fontSize: 11, fill: '#64748b' }}
+                                            interval={0}
+                                            tickFormatter={(value) => value.length > 20 ? value.slice(0, 20) + '...' : value}
                                         />
-                                    ))}
-                                </BarChart>
+                                        <Tooltip
+                                            cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                                            formatter={(value: any) => [`$${value?.toLocaleString()}`, 'Cost']}
+                                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                            wrapperStyle={{ zIndex: 1000 }}
+                                        />
+                                        <Bar dataKey="cost" radius={[0, 4, 4, 0]} barSize={24}>
+                                            {monthBreakdownData.map((entry, index) => (
+                                                <Cell
+                                                    key={`cell-${index}`}
+                                                    fill={entry.color}
+                                                    className="cursor-pointer hover:opacity-80"
+                                                    onClick={() => {
+                                                        if (groupBy === 'Vendor') setSelectedVendor(entry.name);
+                                                        if (groupBy === 'Service') setSelectedService(entry.name);
+                                                    }}
+                                                />
+                                            ))}
+                                        </Bar>
+                                    </BarChart>
+                                ) : (
+                                    /* No Month Selected: Show Stacked Trend Chart */
+                                    <BarChart
+                                        data={stackedTrendData}
+                                        margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
+                                        onClick={(state) => {
+                                            if (state && state.activeLabel) {
+                                                // state.activeLabel is the 'date' string formatted as 'MMM yy'
+                                                // We need to find the corresponding 'YYYY-MM' to set selectedMonth
+                                                const clickedPoint = stackedTrendData.find(p => p.date === state.activeLabel);
+                                                if (clickedPoint) {
+                                                    const monthStr = format(clickedPoint.month, 'yyyy-MM');
+                                                    setSelectedMonth(monthStr);
+                                                }
+                                            }
+                                        }}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                        <XAxis
+                                            dataKey="date"
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={{ fill: '#64748b', fontSize: 11 }}
+                                            interval={0}
+                                            angle={-45}
+                                            textAnchor="end"
+                                            height={60}
+                                        />
+                                        <YAxis
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={{ fill: '#64748b', fontSize: 11 }}
+                                            tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                                        />
+                                        <Tooltip content={<CustomTooltip />} wrapperStyle={{ zIndex: 1000 }} />
+                                        {/* stackKeys sorted largest-first renders largest at bottom of stack */}
+                                        {stackKeys.map((key, index) => (
+                                            <Bar
+                                                key={key}
+                                                dataKey={key}
+                                                stackId="spend"
+                                                fill={colorMap[key] || '#8b5cf6'}
+                                                radius={index === stackKeys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                                                onClick={(data, index, event) => {
+                                                    // Stop propagation so we don't trigger the chart's onClick (month selection)
+                                                    // AND the bar's drill-down
+                                                    if (event && event.stopPropagation) event.stopPropagation();
+
+                                                    // Drill down logic
+                                                    if (groupBy === 'Vendor') setSelectedVendor(key);
+                                                    if (groupBy === 'Service') setSelectedService(key);
+                                                }}
+                                                className="cursor-pointer hover:opacity-80 transition-opacity"
+                                            />
+                                        ))}
+                                    </BarChart>
+                                )}
                             </ResponsiveContainer>
                         )}
                     </div>
@@ -583,18 +851,18 @@ export default function ReportsPage() {
                                 {expandedChart === 'Breakdown' ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-4 h-4" />}
                             </button>
                         </div>
-                        <div style={{ width: '100%', height: expandedChart === 'Breakdown' ? 'calc(100% - 60px)' : 300 }}>
+                        <div style={{ width: '100%', height: expandedChart === 'Breakdown' ? 'calc(100% - 60px)' : Math.max(aggregatedData.length * 40, 300) }}>
                             {chartsReady && (
-                                <ResponsiveContainer width="100%" height={expandedChart === 'Breakdown' ? '100%' : 300} minWidth={0} minHeight={0}>
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                                     <BarChart data={aggregatedData} layout="vertical" margin={{ left: 10, right: 10 }}>
                                         <XAxis type="number" hide />
                                         <YAxis
                                             dataKey="name"
                                             type="category"
-                                            width={120}
+                                            width={220}
                                             tick={{ fontSize: 11, fill: '#64748b' }}
                                             interval={0}
-                                            tickFormatter={(value) => value.length > 18 ? value.slice(0, 18) + '...' : value}
+                                            tickFormatter={(value) => value.length > 20 ? value.slice(0, 20) + '...' : value}
                                         />
                                         <Tooltip
                                             cursor={{ fill: 'rgba(0,0,0,0.04)' }}
@@ -603,7 +871,15 @@ export default function ReportsPage() {
                                         />
                                         <Bar dataKey="cost" radius={[0, 4, 4, 0]} barSize={24}>
                                             {aggregatedData.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                                <Cell
+                                                    key={`cell-${index}`}
+                                                    fill={entry.color}
+                                                    className="cursor-pointer hover:opacity-80"
+                                                    onClick={() => {
+                                                        if (groupBy === 'Vendor') setSelectedVendor(entry.name);
+                                                        if (groupBy === 'Service') setSelectedService(entry.name);
+                                                    }}
+                                                />
                                             ))}
                                         </Bar>
                                     </BarChart>
@@ -613,8 +889,8 @@ export default function ReportsPage() {
                     </div>
 
                     {/* Data Table */}
-                    <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div className="overflow-y-auto max-h-[400px]">
+                    <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                        <div className="overflow-x-auto">
                             <table className="w-full text-sm text-left">
                                 <thead className="text-xs text-slate-500 uppercase bg-slate-50 sticky top-0">
                                     <tr>
@@ -626,12 +902,7 @@ export default function ReportsPage() {
                                 <tbody className="divide-y divide-slate-100">
                                     {aggregatedData.map((row, index) => {
                                         // Find line items matching this row for navigation
-                                        const matchingItems = lineItems.filter(item => {
-                                            if (!item.billingMonth) return false;
-                                            const itemBillingDate = parseISO(item.billingMonth);
-                                            const inRange = monthRange.some(month => isSameMonth(itemBillingDate, month));
-                                            if (!inRange) return false;
-
+                                        const matchingItems = filteredLineItems.filter(item => {
                                             const key = groupBy === 'Service'
                                                 ? extractServiceName(item.description)
                                                 : (item.vendorName || 'Unknown Vendor');
