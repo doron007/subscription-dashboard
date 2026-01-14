@@ -1,15 +1,16 @@
 'use client';
 
 import { useState, useRef, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Papa from 'papaparse';
 import { aiService, type AnalyzedSubscription } from '@/services/aiService';
 import { subscriptionService } from '@/services/subscriptionService';
 import { convertPdfToImages } from '@/lib/pdfUtils';
 import type { Subscription } from '@/types';
+import type { ImportAnalysis, ImportDecision, MergeStrategy, ImportExecutionResult } from '@/lib/import/types';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Upload, Sparkles, AlertTriangle, CheckCircle, Loader2, Plus, ArrowRight } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { ImportPreviewModal } from '@/components/modals/ImportPreviewModal';
+import { Upload, Sparkles, AlertTriangle, CheckCircle, Loader2, Plus, FileSpreadsheet, ScanSearch } from 'lucide-react';
 
 // Main wrapper component with Suspense for useSearchParams
 export default function ShadowItPage() {
@@ -20,19 +21,34 @@ export default function ShadowItPage() {
     );
 }
 
+type TabType = 'scan' | 'import';
+
 function ShadowItContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Tab state
+    const [activeTab, setActiveTab] = useState<TabType>('scan');
+
+    // Device scan refs and state
+    const scanFileInputRef = useRef<HTMLInputElement>(null);
     const [analyzing, setAnalyzing] = useState(false);
     const [results, setResults] = useState<AnalyzedSubscription[]>([]);
     const [addingIds, setAddingIds] = useState<Set<number>>(new Set());
     const [autoLoadTriggered, setAutoLoadTriggered] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
 
     // Duplicate Detection State
     const [existingSubscriptions, setExistingSubscriptions] = useState<Subscription[]>([]);
     const [conflictSub, setConflictSub] = useState<{ existing: Subscription, new: AnalyzedSubscription, index: number } | null>(null);
+
+    // Invoice import refs and state
+    const invoiceImportRef = useRef<HTMLInputElement>(null);
+    const [analyzingInvoices, setAnalyzingInvoices] = useState(false);
+    const [invoiceAnalysis, setInvoiceAnalysis] = useState<ImportAnalysis | null>(null);
+    const [invoiceCsvData, setInvoiceCsvData] = useState<any[]>([]);
+    const [showImportPreview, setShowImportPreview] = useState(false);
+    const [invoiceIsDragging, setInvoiceIsDragging] = useState(false);
 
     // Load existing subscriptions on mount
     useEffect(() => {
@@ -46,7 +62,6 @@ function ShadowItContent() {
             setAutoLoadTriggered(true);
             console.log('[AutoLoad] Fetching test_invoice.pdf...');
 
-            // Fetch the test PDF from public folder
             fetch('/test_invoice.pdf')
                 .then(response => {
                     if (!response.ok) throw new Error('Failed to fetch test PDF');
@@ -64,8 +79,7 @@ function ShadowItContent() {
         }
     }, [searchParams, autoLoadTriggered, analyzing, results.length]);
 
-    const [isDragging, setIsDragging] = useState(false);
-
+    // ========== DEVICE SCAN HANDLERS ==========
     const onDragOver = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(true);
@@ -109,11 +123,9 @@ function ShadowItContent() {
                         }
                     } catch (pdfError) {
                         console.error(`PDF Error for ${file.name}:`, pdfError);
-                        // Continue to next file
                     }
                 } else if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
                     hasCsv = true;
-                    // For CSV, we need to wrap Papa.parse in a promise
                     try {
                         const parsedData = await new Promise<any[]>((resolve, reject) => {
                             Papa.parse(file, {
@@ -132,11 +144,8 @@ function ShadowItContent() {
                 }
             }
 
-            // Analyze collected data
             if (hasPdf && allImages.length > 0) {
                 console.log(`Sending ${allImages.length} images to AI...`);
-                // If we also have CSV data, we might want to send it too, but AI service currently splits paths.
-                // For now, prioritize Vision if images exist.
                 const candidates = await aiService.analyzeImages(allImages);
                 setResults(candidates || []);
             } else if (hasCsv && csvTransactions.length > 0) {
@@ -157,33 +166,26 @@ function ShadowItContent() {
         }
     };
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleScanFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
         if (files && files.length > 0) processFiles(Array.from(files));
     };
 
     const handleAdd = async (sub: AnalyzedSubscription, index: number) => {
-        // 1. Check for duplicate
         const duplicate = existingSubscriptions.find(e => e.name.toLowerCase() === sub.name.toLowerCase());
         if (duplicate) {
             setConflictSub({ existing: duplicate, new: sub, index });
             return;
         }
-
         performAdd(sub, index);
     };
 
     const performAdd = async (sub: AnalyzedSubscription, index: number) => {
         setAddingIds(prev => new Set(prev).add(index));
         try {
-            // Check if this is a rich invoice analysis (has line items with quantities, etc.)
-            // We can infer this if line_items are present and have granular data.
-            // Or we check if it came from the Image pipeline which now returns the rich object structure.
             const isRichInvoice = sub.line_items && sub.line_items.length > 0 && sub.line_items.some(li => li.quantity !== undefined);
 
             if (isRichInvoice) {
-                // Reconstruct AnalyzedInvoice for the API
-                // Use actual invoice number if available, otherwise generate a fallback
                 const invoiceNumber = sub.invoice_number ||
                     `INV-${(sub.last_transaction_date || '').replace(/\D/g, '')}-${Math.round(sub.cost)}`;
 
@@ -211,9 +213,8 @@ function ShadowItContent() {
                 };
 
                 await subscriptionService.createInvoice(analysisPayload);
-                alert('Invoice processed and linked to dashboard!'); // Temporary feedback
+                alert('Invoice processed and linked to dashboard!');
             } else {
-                // Legacy CSV / Simple Path
                 const newSubscription = await subscriptionService.create({
                     name: sub.name,
                     category: sub.category,
@@ -240,7 +241,6 @@ function ShadowItContent() {
                 }
             }
 
-            // Remove from results list to show progress
             setResults(prev => prev.filter((_, i) => i !== index));
             router.refresh();
         } catch (error) {
@@ -264,11 +264,9 @@ function ShadowItContent() {
         try {
             await subscriptionService.update(existing.id, {
                 cost: newSub.cost,
-                // Update other fields if needed, e.g. status
                 status: 'Active'
             });
 
-            // Add detected transactions from Update
             if (newSub.line_items && newSub.line_items.length > 0) {
                 for (const item of newSub.line_items) {
                     await subscriptionService.addTransaction({
@@ -282,11 +280,9 @@ function ShadowItContent() {
                 }
             }
 
-            // Refresh local list
             const updatedList = existingSubscriptions.map(s => s.id === existing.id ? { ...s, cost: newSub.cost } : s);
             setExistingSubscriptions(updatedList);
 
-            // Remove from results
             setResults(prev => prev.filter((_, i) => i !== index));
             router.refresh();
             alert(`Updated ${existing.name} successfully!`);
@@ -301,141 +297,344 @@ function ShadowItContent() {
         }
     };
 
+    // ========== INVOICE IMPORT HANDLERS ==========
+    const onInvoiceDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        setInvoiceIsDragging(true);
+    };
+
+    const onInvoiceDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        setInvoiceIsDragging(false);
+    };
+
+    const onInvoiceDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setInvoiceIsDragging(false);
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+            processInvoiceFile(files[0]);
+        }
+    };
+
+    const handleInvoiceFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) processInvoiceFile(file);
+    };
+
+    const processInvoiceFile = async (file: File) => {
+        setAnalyzingInvoices(true);
+
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: async (results) => {
+                try {
+                    setInvoiceCsvData(results.data);
+
+                    const response = await fetch('/api/import/analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            csvData: results.data,
+                            filename: file.name
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.details || 'Analysis failed');
+                    }
+
+                    const analysis: ImportAnalysis = await response.json();
+                    setInvoiceAnalysis(analysis);
+                    setShowImportPreview(true);
+
+                } catch (error) {
+                    console.error('Invoice analysis error:', error);
+                    alert(`Failed to analyze invoice file: ${(error as Error).message}`);
+                } finally {
+                    setAnalyzingInvoices(false);
+                    if (invoiceImportRef.current) invoiceImportRef.current.value = '';
+                }
+            },
+            error: (error) => {
+                console.error('CSV parse error:', error);
+                setAnalyzingInvoices(false);
+                alert('Error parsing CSV file');
+            }
+        });
+    };
+
+    const handleExecuteImport = async (decisions: ImportDecision[], globalStrategy: MergeStrategy) => {
+        try {
+            const response = await fetch('/api/import/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    csvData: invoiceCsvData,
+                    decisions,
+                    globalStrategy
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.details || 'Import failed');
+            }
+
+            const result: ImportExecutionResult = await response.json();
+
+            const message = [
+                `Import completed!`,
+                `Created: ${result.created.invoices} invoices, ${result.created.lineItems} line items`,
+                `Updated: ${result.updated.invoices} invoices`,
+                `Skipped: ${result.skipped.invoices} invoices`,
+                result.errors.length > 0 ? `Errors: ${result.errors.length}` : ''
+            ].filter(Boolean).join('\n');
+
+            alert(message);
+
+            setShowImportPreview(false);
+            setInvoiceAnalysis(null);
+            setInvoiceCsvData([]);
+            router.refresh();
+
+        } catch (error) {
+            console.error('Import execution error:', error);
+            alert(`Import failed: ${(error as Error).message}`);
+        }
+    };
+
+    const handleClosePreview = () => {
+        setShowImportPreview(false);
+        setInvoiceAnalysis(null);
+        setInvoiceCsvData([]);
+    };
+
     return (
         <DashboardLayout>
             <div className="max-w-4xl mx-auto space-y-8">
 
                 {/* Header */}
                 <div>
-                    <div className="flex items-center gap-2 mb-2">
-                        <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider">Beta Feature</span>
-                    </div>
                     <h1 className="text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
                         <Sparkles className="w-8 h-8 text-purple-600" />
-                        Shadow IT Detector
+                        Shadow Detector
                     </h1>
                     <p className="text-slate-500 mt-2 text-lg">
-                        Upload your credit card statement. Our AI will hunt for hidden subscriptions you didn't know about.
+                        Discover hidden subscriptions and import invoice data into your dashboard.
                     </p>
                 </div>
 
-                {/* Upload Area */}
-                {results.length === 0 && (
-                    <div
-                        className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all cursor-pointer group ${isDragging
-                            ? 'border-purple-600 bg-purple-100 scale-[1.02]'
-                            : 'border-slate-300 hover:border-purple-500 hover:bg-purple-50/50'
+                {/* Tabs */}
+                <div className="border-b border-slate-200">
+                    <nav className="flex gap-8" aria-label="Tabs">
+                        <button
+                            onClick={() => setActiveTab('scan')}
+                            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${
+                                activeTab === 'scan'
+                                    ? 'border-purple-500 text-purple-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
                             }`}
-                        onClick={() => fileInputRef.current?.click()}
-                        onDragOver={onDragOver}
-                        onDragLeave={onDragLeave}
-                        onDrop={onDrop}
-                    >
-                        <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv,.pdf" multiple />
+                        >
+                            <ScanSearch className="w-4 h-4" />
+                            Scan Documents
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('import')}
+                            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${
+                                activeTab === 'import'
+                                    ? 'border-purple-500 text-purple-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                            }`}
+                        >
+                            <FileSpreadsheet className="w-4 h-4" />
+                            Import Data
+                        </button>
+                    </nav>
+                </div>
 
-                        {analyzing ? (
-                            <div className="flex flex-col items-center">
-                                <Loader2 className="w-12 h-12 text-purple-600 animate-spin mb-4" />
-                                <h3 className="text-lg font-medium text-slate-900">Analyzing transactions...</h3>
-                                <p className="text-slate-500">Asking the AI using OpenRouter...</p>
+                {/* Tab Content */}
+                {activeTab === 'scan' && (
+                    <div className="space-y-6">
+                        <div className="bg-purple-50 border border-purple-100 rounded-lg p-4">
+                            <p className="text-purple-800 text-sm">
+                                <strong>For: Raw vendor invoices (PDF/images)</strong> — Upload invoice documents directly from vendors.
+                                Our AI will extract line items, amounts, and vendor details automatically.
+                            </p>
+                        </div>
+
+                        {/* Upload Area */}
+                        {results.length === 0 && (
+                            <div
+                                className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all cursor-pointer group ${isDragging
+                                    ? 'border-purple-600 bg-purple-100 scale-[1.02]'
+                                    : 'border-slate-300 hover:border-purple-500 hover:bg-purple-50/50'
+                                    }`}
+                                onClick={() => scanFileInputRef.current?.click()}
+                                onDragOver={onDragOver}
+                                onDragLeave={onDragLeave}
+                                onDrop={onDrop}
+                            >
+                                <input type="file" ref={scanFileInputRef} onChange={handleScanFileUpload} className="hidden" accept=".csv,.pdf" multiple />
+
+                                {analyzing ? (
+                                    <div className="flex flex-col items-center">
+                                        <Loader2 className="w-12 h-12 text-purple-600 animate-spin mb-4" />
+                                        <h3 className="text-lg font-medium text-slate-900">Analyzing transactions...</h3>
+                                        <p className="text-slate-500">Asking the AI using OpenRouter...</p>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center">
+                                        <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 transition-transform ${isDragging ? 'bg-purple-200 scale-110' : 'bg-purple-100 group-hover:scale-110'
+                                            }`}>
+                                            <Upload className={`w-8 h-8 ${isDragging ? 'text-purple-700' : 'text-purple-600'}`} />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-slate-900 mb-2">
+                                            {isDragging ? 'Drop file to analyze' : 'Upload Invoice PDF or Image'}
+                                        </h3>
+                                        <p className="text-slate-500 max-w-sm mx-auto">
+                                            Drag and drop or click to select vendor invoice documents. AI will extract and structure the data automatically.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
-                        ) : (
-                            <div className="flex flex-col items-center">
-                                <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 transition-transform ${isDragging ? 'bg-purple-200 scale-110' : 'bg-purple-100 group-hover:scale-110'
-                                    }`}>
-                                    <Upload className={`w-8 h-8 ${isDragging ? 'text-purple-700' : 'text-purple-600'}`} />
+                        )}
+
+                        {/* Results */}
+                        {results.length > 0 && (
+                            <div className="space-y-6">
+                                <div className="flex items-center justify-between">
+                                    <h2 className="text-xl font-bold text-slate-900">Detected Subscriptions ({results.length})</h2>
+                                    <button onClick={() => setResults([])} className="text-sm text-slate-500 hover:text-slate-900">Clear & Upload New</button>
                                 </div>
-                                <h3 className="text-xl font-bold text-slate-900 mb-2">
-                                    {isDragging ? 'Drop file to analyze' : 'Upload Bank Statement (CSV or PDF)'}
-                                </h3>
-                                <p className="text-slate-500 max-w-sm mx-auto">
-                                    Drag and drop or click to select files. We'll analyze transaction descriptions to find recurring software costs.
-                                </p>
+
+                                <div className="grid gap-4">
+                                    {results.map((sub, idx) => (
+                                        <div key={idx} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-start justify-between group hover:border-purple-200 transition-colors">
+                                            <div className="flex gap-4">
+                                                <div className="w-12 h-12 bg-slate-50 rounded-lg flex items-center justify-center border border-slate-100">
+                                                    <img
+                                                        src={`https://www.google.com/s2/favicons?domain=${sub.name.replace(/\s+/g, '').toLowerCase()}.com&sz=128`}
+                                                        className="w-8 h-8 object-contain"
+                                                        onError={(e) => (e.currentTarget.style.display = 'none')}
+                                                        alt=""
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <h3 className="font-bold text-slate-900 text-lg">{sub.name}</h3>
+                                                    <div className="flex items-center gap-3 text-sm text-slate-500 mt-1">
+                                                        <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600">{sub.category}</span>
+                                                        <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                                                            <CheckCircle className="w-3.5 h-3.5" />
+                                                            {Math.round(sub.confidence * 100)}% Confidence
+                                                        </span>
+                                                    </div>
+                                                    {sub.reasoning && (
+                                                        <p className="text-slate-500 text-xs mt-2 italic bg-slate-50 inline-block px-2 py-1 rounded">
+                                                            AI Reasoning: "{sub.reasoning}"
+                                                        </p>
+                                                    )}
+
+                                                    {/* Line Items Display */}
+                                                    {sub.line_items && sub.line_items.length > 0 && (
+                                                        <div className="mt-3">
+                                                            <details className="group/details" open={true}>
+                                                                <summary className="text-xs font-medium text-purple-600 cursor-pointer hover:text-purple-700 flex items-center gap-1 select-none">
+                                                                    View {sub.line_items.length} Extracted Line Items
+                                                                </summary>
+                                                                <div className="mt-2 pl-2 border-l-2 border-slate-100 space-y-2">
+                                                                    {sub.line_items.map((item, liIdx) => (
+                                                                        <div key={liIdx} className="text-xs text-slate-600 grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1">
+                                                                            <span className="font-medium text-slate-800 col-span-3">{item.description}</span>
+                                                                            <div className="col-span-3 flex justify-between text-slate-500 border-b border-slate-50 pb-1 mb-1">
+                                                                                <span>{item.service_name || "Service"}</span>
+                                                                                <div className="flex gap-4">
+                                                                                    {item.quantity && <span>Qty: {item.quantity}</span>}
+                                                                                    {item.unit_price && <span>Unit: ${item.unit_price}</span>}
+                                                                                    <span className="font-bold text-slate-700">${item.cost || item.total_amount}</span>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </details>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-col items-end gap-3">
+                                                <div className="text-xl font-bold text-slate-900">${sub.cost}/mo</div>
+                                                <button
+                                                    onClick={() => handleAdd(sub, idx)}
+                                                    disabled={addingIds.has(idx)}
+                                                    className="bg-slate-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 flex items-center gap-2 text-sm"
+                                                >
+                                                    {addingIds.has(idx) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                                                    Import Record
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </div>
                 )}
 
-                {/* Results */}
-                {results.length > 0 && (
+                {activeTab === 'import' && (
                     <div className="space-y-6">
-                        <div className="flex items-center justify-between">
-                            <h2 className="text-xl font-bold text-slate-900">Detected Subscriptions ({results.length})</h2>
-                            <button onClick={() => setResults([])} className="text-sm text-slate-500 hover:text-slate-900">Clear & Upload New</button>
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                            <p className="text-blue-800 text-sm">
+                                <strong>For: Accounting system exports (CSV)</strong> — Import data from SAP, credit card statements, or other accounting systems.
+                                We'll compare against existing records and show you what's new, changed, or pending before importing.
+                            </p>
                         </div>
 
-                        <div className="grid gap-4">
-                            {results.map((sub, idx) => (
-                                <div key={idx} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-start justify-between group hover:border-purple-200 transition-colors">
-                                    <div className="flex gap-4">
-                                        <div className="w-12 h-12 bg-slate-50 rounded-lg flex items-center justify-center border border-slate-100">
-                                            <img
-                                                src={`https://www.google.com/s2/favicons?domain=${sub.name.replace(/\s+/g, '').toLowerCase()}.com&sz=128`}
-                                                className="w-8 h-8 object-contain"
-                                                onError={(e) => (e.currentTarget.style.display = 'none')}
-                                            />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-slate-900 text-lg">{sub.name}</h3>
-                                            <div className="flex items-center gap-3 text-sm text-slate-500 mt-1">
-                                                <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600">{sub.category}</span>
-                                                <span className="flex items-center gap-1 text-emerald-600 font-medium">
-                                                    <CheckCircle className="w-3.5 h-3.5" />
-                                                    {Math.round(sub.confidence * 100)}% Confidence
-                                                </span>
-                                            </div>
-                                            {sub.reasoning && (
-                                                <p className="text-slate-500 text-xs mt-2 italic bg-slate-50 inline-block px-2 py-1 rounded">
-                                                    AI Reasoning: "{sub.reasoning}"
-                                                </p>
-                                            )}
+                        {/* Upload Area */}
+                        <div
+                            className={`border-2 border-dashed rounded-2xl p-12 text-center transition-all cursor-pointer group ${invoiceIsDragging
+                                ? 'border-blue-600 bg-blue-100 scale-[1.02]'
+                                : 'border-slate-300 hover:border-blue-500 hover:bg-blue-50/50'
+                                }`}
+                            onClick={() => invoiceImportRef.current?.click()}
+                            onDragOver={onInvoiceDragOver}
+                            onDragLeave={onInvoiceDragLeave}
+                            onDrop={onInvoiceDrop}
+                        >
+                            <input type="file" ref={invoiceImportRef} onChange={handleInvoiceFileUpload} className="hidden" accept=".csv" />
 
-                                            {/* Line Items Display */}
-                                            {sub.line_items && sub.line_items.length > 0 && (
-                                                <div className="mt-3">
-                                                    <details className="group/details" open={true}>
-                                                        <summary className="text-xs font-medium text-purple-600 cursor-pointer hover:text-purple-700 flex items-center gap-1 select-none">
-                                                            View {sub.line_items.length} Extracted Line Items
-                                                        </summary>
-                                                        <div className="mt-2 pl-2 border-l-2 border-slate-100 space-y-2">
-                                                            {sub.line_items.map((item, liIdx) => (
-                                                                <div key={liIdx} className="text-xs text-slate-600 grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1">
-                                                                    <span className="font-medium text-slate-800 col-span-3">{item.description}</span>
-                                                                    <div className="col-span-3 flex justify-between text-slate-500 border-b border-slate-50 pb-1 mb-1">
-                                                                        <span>{item.service_name || "Service"}</span>
-                                                                        <div className="flex gap-4">
-                                                                            {item.quantity && <span>Qty: {item.quantity}</span>}
-                                                                            {item.unit_price && <span>Unit: ${item.unit_price}</span>}
-                                                                            <span className="font-bold text-slate-700">${item.cost || item.total_amount}</span>
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </details>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <div className="flex flex-col items-end gap-3">
-                                        <div className="text-xl font-bold text-slate-900">${sub.cost}/mo</div>
-                                        <button
-                                            onClick={() => handleAdd(sub, idx)}
-                                            disabled={addingIds.has(idx)}
-                                            className="bg-slate-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 flex items-center gap-2 text-sm"
-                                        >
-                                            {addingIds.has(idx) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                                            Import Record
-                                        </button>
-                                    </div>
+                            {analyzingInvoices ? (
+                                <div className="flex flex-col items-center">
+                                    <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+                                    <h3 className="text-lg font-medium text-slate-900">Analyzing data...</h3>
+                                    <p className="text-slate-500">Comparing against existing records...</p>
                                 </div>
-                            ))}
+                            ) : (
+                                <div className="flex flex-col items-center">
+                                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 transition-transform ${invoiceIsDragging ? 'bg-blue-200 scale-110' : 'bg-blue-100 group-hover:scale-110'
+                                        }`}>
+                                        <FileSpreadsheet className={`w-8 h-8 ${invoiceIsDragging ? 'text-blue-700' : 'text-blue-600'}`} />
+                                    </div>
+                                    <h3 className="text-xl font-bold text-slate-900 mb-2">
+                                        {invoiceIsDragging ? 'Drop CSV to analyze' : 'Upload CSV Export'}
+                                    </h3>
+                                    <p className="text-slate-500 max-w-sm mx-auto">
+                                        Drag and drop your SAP invoice export, credit card statement, or other accounting CSV.
+                                    </p>
+                                    <p className="text-slate-400 text-xs mt-4">
+                                        Supports: SAP invoice exports, credit card transaction CSVs, and similar formats
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
             </div>
-            {/* Conflict Modal */}
+
+            {/* Conflict Modal (for Device Scan) */}
             {conflictSub && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl">
@@ -479,6 +678,15 @@ function ShadowItContent() {
                     </div>
                 </div>
             )}
+
+            {/* Import Preview Modal */}
+            <ImportPreviewModal
+                isOpen={showImportPreview}
+                onClose={handleClosePreview}
+                analysis={invoiceAnalysis}
+                csvData={invoiceCsvData}
+                onExecute={handleExecuteImport}
+            />
         </DashboardLayout>
     );
 }

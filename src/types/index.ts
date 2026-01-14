@@ -47,6 +47,7 @@ export interface InvoiceLineItem {
     totalAmount: number;
     periodStart?: string;
     periodEnd?: string;
+    billingMonthOverride?: string; // Manual override for service month from CSV
 }
 
 // ----------------------------------------

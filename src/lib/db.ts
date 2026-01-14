@@ -529,7 +529,8 @@ export const db = {
                 unit_price: item.unitPrice,
                 total_amount: item.totalAmount,
                 period_start: item.periodStart,
-                period_end: item.periodEnd
+                period_end: item.periodEnd,
+                billing_month_override: item.billingMonthOverride
             }));
 
             const { error } = await supabase
