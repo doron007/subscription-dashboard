@@ -1,6 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   /**
+   * Enable standalone output for Docker deployments.
+   * This creates a minimal production build with all dependencies bundled.
+   */
+  output: 'standalone',
+
+  /**
    * Security headers for production deployment.
    * These help protect against common web vulnerabilities.
    */
