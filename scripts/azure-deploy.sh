@@ -50,6 +50,11 @@ if [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
     echo "Set it in .env.local or as an environment variable"
     exit 1
 fi
+if [ -z "$NEXT_PUBLIC_APP_URL" ]; then
+    echo "ERROR: NEXT_PUBLIC_APP_URL is required for build"
+    echo "Set it in .env.local or as an environment variable"
+    exit 1
+fi
 
 # Get git commit hash for version footer
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -73,11 +78,13 @@ echo "Version: $VERSION"
 # Pass NEXT_PUBLIC_* as build args (required at build time for Next.js)
 echo ""
 echo "Building and pushing image to ACR..."
+echo "App URL: $NEXT_PUBLIC_APP_URL"
 az acr build --registry "$ACR_NAME" \
     --image "$IMAGE_NAME:latest" \
     --image "$IMAGE_NAME:$VERSION" \
     --build-arg "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" \
     --build-arg "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
+    --build-arg "NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL" \
     --build-arg "NEXT_PUBLIC_GIT_COMMIT=$GIT_COMMIT" \
     .
 
@@ -135,10 +142,7 @@ else
         --max-replicas 3
 fi
 
-# Get the app URL for NEXT_PUBLIC_APP_URL
-APP_URL=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
-
-# Set secrets first (must exist before being referenced)
+# Set secrets (must exist before being referenced)
 echo ""
 echo "Setting secrets..."
 az containerapp secret set \
@@ -156,30 +160,12 @@ az containerapp update \
     --set-env-vars \
         "SUPABASE_SERVICE_ROLE_KEY=secretref:supabase-service-role-key" \
         "OPENROUTER_API_KEY=secretref:openrouter-api-key" \
-        "NEXT_PUBLIC_APP_URL=https://$APP_URL"
-
-# Rebuild with correct APP_URL now that we know it
-echo ""
-echo "Rebuilding with correct NEXT_PUBLIC_APP_URL..."
-az acr build --registry "$ACR_NAME" \
-    --image "$IMAGE_NAME:latest" \
-    --image "$IMAGE_NAME:$VERSION" \
-    --build-arg "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" \
-    --build-arg "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
-    --build-arg "NEXT_PUBLIC_APP_URL=https://$APP_URL" \
-    --build-arg "NEXT_PUBLIC_GIT_COMMIT=$GIT_COMMIT" \
-    .
-
-# Update to the new image
-az containerapp update \
-    --name "$APP_NAME" \
-    --resource-group "$RESOURCE_GROUP" \
-    --image "$ACR_SERVER/$IMAGE_NAME:$VERSION"
+        "NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL"
 
 # Output summary
 echo ""
 echo "=== Deployment Complete ==="
-echo "App URL: https://$APP_URL"
+echo "App URL: $NEXT_PUBLIC_APP_URL"
 echo "Version: $VERSION"
 echo ""
 echo "Environment variables configured:"
