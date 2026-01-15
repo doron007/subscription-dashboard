@@ -161,11 +161,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithAzure = async () => {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
+    // Use window.location.origin to get the current domain
+    // This works because the browser knows the actual URL the user is on
+    const redirectTo = `${window.location.origin}/auth/callback`;
+    console.log('[SSO] Redirect URL:', redirectTo);
+
     await supabase.auth.signInWithOAuth({
       provider: 'azure',
       options: {
-        redirectTo: `${appUrl}/auth/callback`,
+        redirectTo,
         scopes: 'email profile openid',
       },
     });
@@ -179,9 +183,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const resetPassword = async (email: string) => {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${appUrl}/reset-password`,
+      redirectTo: `${window.location.origin}/reset-password`,
     });
     return { error };
   };
