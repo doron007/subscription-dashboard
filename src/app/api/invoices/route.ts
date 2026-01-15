@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { AnalyzedInvoice } from '@/lib/analysis/types';
+import { requireAuth } from '@/lib/api-auth';
 
 export async function GET() {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const invoices = await db.invoices.findAll();
         return NextResponse.json(invoices);
@@ -53,6 +57,9 @@ function sanitizeNumber(value: any): number {
 }
 
 export async function POST(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const body = await request.json();
         const { analysis } = body as { analysis: AnalyzedInvoice };

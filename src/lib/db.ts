@@ -1,6 +1,9 @@
-import { supabase } from './supabase';
+import { createClient } from './supabase/client';
 import type { Subscription, SubscriptionStatus, BillingCycle, PaymentMethod, Employee, Device, Assignment, Vendor, SubscriptionService, Invoice, InvoiceLineItem } from '../types';
 import { normalizeForMatching } from './import/parseCSV';
+
+// Create a singleton instance for client-side usage
+const supabase = createClient();
 
 export const db = {
     // --- Phase 6: New Entities ---

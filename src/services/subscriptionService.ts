@@ -97,6 +97,16 @@ export const subscriptionService = {
         return response.json();
     },
 
+    updateInvoice: async (id: string, data: any): Promise<any> => {
+        const response = await fetch(`/api/invoices/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!response.ok) throw new Error('Failed to update invoice');
+        return response.json();
+    },
+
     // --- Phase 6: New Methods ---
 
     getVendors: async () => {

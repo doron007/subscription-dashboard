@@ -7,7 +7,7 @@ import { VendorDetailsSection } from '@/components/subscriptions/VendorDetailsSe
 import type { Subscription, BillingCycle, PaymentMethod, Vendor } from '@/types';
 import { Loader2, ArrowLeft, Trash2, Box, Calendar, CreditCard, User, AlertCircle, Package, FileText, ListChecks, Users, AlertTriangle, Globe, Mail } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { AssignmentManager } from '@/components/assignments/AssignmentManager';
+
 import Link from 'next/link';
 import { TransactionList } from '@/components/subscriptions/TransactionList';
 import { ServicesTab } from '@/components/subscriptions/ServicesTab';
@@ -19,7 +19,7 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
     const router = useRouter();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [activeTab, setActiveTab] = useState<'details' | 'services' | 'invoices' | 'lineitems' | 'team'>('details');
+    const [activeTab, setActiveTab] = useState<'details' | 'services' | 'invoices' | 'lineitems'>('details');
 
     // Delete handling
     const [vendor, setVendor] = useState<Vendor | null>(null);
@@ -116,7 +116,7 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                 },
                 seats: {
                     total: Number(formData.seatsTotal),
-                    used: 0, // Backend or AssignmentManager updates this separately
+                    used: 0, // Backend updates this separately
                 },
                 status: formData.status as any,
             };
@@ -274,16 +274,7 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                                 <ListChecks className="w-4 h-4" />
                                 Line Items
                             </button>
-                            <button
-                                onClick={() => setActiveTab('team')}
-                                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors flex items-center gap-2 ${activeTab === 'team'
-                                    ? 'border-purple-600 text-purple-600'
-                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                                    }`}
-                            >
-                                <Users className="w-4 h-4" />
-                                Team
-                            </button>
+
                         </nav>
                     </div>
                 </div>
@@ -517,12 +508,7 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                     </div>
                 )}
 
-                {activeTab === 'team' && (
-                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                        <h3 className="font-semibold text-slate-900 mb-4">Team & Seat Assignments</h3>
-                        <AssignmentManager subscriptionId={params.id} />
-                    </div>
-                )}
+
             </div>
 
             <ConfirmDeleteModal

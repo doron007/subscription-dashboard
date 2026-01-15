@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth } from '@/lib/api-auth';
 
 export async function GET() {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const vendors = await db.vendors.findAll();
         return NextResponse.json(vendors);

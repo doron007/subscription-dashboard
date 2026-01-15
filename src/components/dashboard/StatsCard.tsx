@@ -2,7 +2,7 @@ import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MetricCardProps } from '@/types';
 
-export function StatsCard({ label, value, trend, icon: Icon }: MetricCardProps) {
+export function StatsCard({ label, value, trend, icon: Icon, subtext }: MetricCardProps) {
     return (
         <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-clean flex items-start justify-between">
             <div>
@@ -21,6 +21,11 @@ export function StatsCard({ label, value, trend, icon: Icon }: MetricCardProps) 
                         <span className="text-slate-400 ml-2">vs last month</span>
                     </div>
                 )}
+
+                {subtext && (
+                    <p className="text-xs text-slate-400 mt-2">{subtext}</p>
+                )}
+
             </div>
 
             {Icon && (

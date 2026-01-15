@@ -1,13 +1,16 @@
-import { LayoutDashboard, CreditCard, PieChart, Settings, LogOut, Code2, Users, Monitor, Sparkles } from 'lucide-react';
+'use client';
+
+import { LayoutDashboard, CreditCard, PieChart, Settings, LogOut, Code2, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', href: '/', active: false },
     { icon: CreditCard, label: 'Subscriptions', href: '/subscriptions', active: false },
-    { icon: Users, label: 'Team', href: '/team', active: false },
-    { icon: Monitor, label: 'Devices', href: '/devices', active: false },
+
     { icon: Sparkles, label: 'Shadow Detector', href: '/shadow-it', active: false },
     { icon: PieChart, label: 'Reports', href: '/reports', active: false },
     { icon: Settings, label: 'Settings', href: '/settings', active: false },
@@ -15,6 +18,40 @@ const navItems = [
 
 export function Sidebar() {
     const [items] = useState(navItems);
+    const { profile, signOut, isLoading } = useAuth();
+    const router = useRouter();
+
+    const handleSignOut = async () => {
+        await signOut();
+        router.push('/login');
+    };
+
+    // Get initials from full name or email
+    const getInitials = () => {
+        if (profile?.full_name) {
+            return profile.full_name
+                .split(' ')
+                .map(n => n[0])
+                .join('')
+                .toUpperCase()
+                .slice(0, 2);
+        }
+        if (profile?.email) {
+            return profile.email[0].toUpperCase();
+        }
+        return '?';
+    };
+
+    // Get display name
+    const getDisplayName = () => {
+        return profile?.full_name || profile?.email?.split('@')[0] || 'User';
+    };
+
+    // Get role display
+    const getRoleDisplay = () => {
+        if (!profile?.role) return '';
+        return profile.role.charAt(0).toUpperCase() + profile.role.slice(1);
+    };
 
     return (
         <aside className="w-64 h-screen bg-slate-900 text-slate-300 flex flex-col border-r border-slate-800 shrink-0 fixed left-0 top-0">
@@ -46,14 +83,22 @@ export function Sidebar() {
             {/* Footer / User Profile */}
             <div className="p-4 border-t border-slate-800">
                 <div className="flex items-center gap-3 px-2">
-                    <div className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-slate-50 font-medium">
-                        JD
+                    <div className="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-slate-50 font-medium text-sm">
+                        {isLoading ? '...' : getInitials()}
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-50 truncate">John Doe</p>
-                        <p className="text-xs text-slate-400 truncate">VP of IT</p>
+                        <p className="text-sm font-medium text-slate-50 truncate">
+                            {isLoading ? 'Loading...' : getDisplayName()}
+                        </p>
+                        <p className="text-xs text-slate-400 truncate">
+                            {isLoading ? '' : getRoleDisplay()}
+                        </p>
                     </div>
-                    <button className="text-slate-400 hover:text-slate-50">
+                    <button
+                        onClick={handleSignOut}
+                        className="text-slate-400 hover:text-slate-50 transition-colors"
+                        title="Sign out"
+                    >
                         <LogOut className="w-5 h-5" />
                     </button>
                 </div>

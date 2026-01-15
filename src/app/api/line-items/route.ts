@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { resolveBillingMonth, parsePeriodFromDescription } from '@/lib/periodParser';
 import { format } from 'date-fns';
+import { requireAuth } from '@/lib/api-auth';
 
 // GET /api/line-items - Get all line items with invoice info and resolved billing month
 export async function GET() {
+    const { response } = await requireAuth();
+    if (response) return response;
+
+    const supabase = createClient();
     try {
         const { data, error } = await supabase
             .from('sub_invoice_line_items')
@@ -80,6 +85,9 @@ export async function GET() {
 
 // POST /api/line-items - Create new line item
 export async function POST(request: NextRequest) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const body = await request.json();
 
     const lineItem = await db.lineItems.create({

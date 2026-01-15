@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth } from '@/lib/api-auth';
 
 export async function GET(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const { searchParams } = new URL(request.url);
     const subId = searchParams.get('subscriptionId');
 
@@ -18,6 +22,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const body = await request.json();
         const newAssignment = await db.assignments.create(body);
@@ -29,6 +36,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
