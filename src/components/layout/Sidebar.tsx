@@ -1,6 +1,6 @@
 'use client';
 
-import { LayoutDashboard, CreditCard, PieChart, Settings, LogOut, Code2, Sparkles } from 'lucide-react';
+import { LayoutDashboard, CreditCard, PieChart, Settings, LogOut, Code2, Sparkles, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 import Link from 'next/link';
@@ -10,15 +10,18 @@ import { useAuth } from '@/contexts/AuthContext';
 const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', href: '/', active: false },
     { icon: CreditCard, label: 'Subscriptions', href: '/subscriptions', active: false },
-
     { icon: Sparkles, label: 'Shadow Detector', href: '/shadow-it', active: false },
     { icon: PieChart, label: 'Reports', href: '/reports', active: false },
     { icon: Settings, label: 'Settings', href: '/settings', active: false },
 ];
 
+const adminNavItems = [
+    { icon: Users, label: 'User Management', href: '/settings/users', active: false },
+];
+
 export function Sidebar() {
     const [items] = useState(navItems);
-    const { profile, signOut, isLoading } = useAuth();
+    const { profile, signOut, isLoading, isAdmin } = useAuth();
     const router = useRouter();
 
     const handleSignOut = async () => {
@@ -50,7 +53,12 @@ export function Sidebar() {
     // Get role display
     const getRoleDisplay = () => {
         if (!profile?.role) return '';
-        return profile.role.charAt(0).toUpperCase() + profile.role.slice(1);
+        const roleLabels: Record<string, string> = {
+            user: 'User',
+            admin: 'Admin',
+            super_admin: 'Super Admin',
+        };
+        return roleLabels[profile.role] || profile.role;
     };
 
     return (
@@ -62,7 +70,7 @@ export function Sidebar() {
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 px-3 py-6 space-y-1">
+            <nav className="flex-1 px-3 py-6 space-y-1 overflow-y-auto">
                 {items.map((item) => (
                     <Link
                         key={item.label}
@@ -78,6 +86,30 @@ export function Sidebar() {
                         {item.label}
                     </Link>
                 ))}
+
+                {/* Admin Section */}
+                {isAdmin && (
+                    <>
+                        <div className="pt-4 pb-2 px-3">
+                            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Admin</span>
+                        </div>
+                        {adminNavItems.map((item) => (
+                            <Link
+                                key={item.label}
+                                href={item.href}
+                                className={cn(
+                                    "flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                                    item.active
+                                        ? "bg-slate-800 text-slate-50 shadow-sm"
+                                        : "hover:bg-slate-800/50 hover:text-slate-100"
+                                )}
+                            >
+                                <item.icon className={cn("w-5 h-5 mr-3", item.active ? "text-slate-50" : "text-slate-400")} />
+                                {item.label}
+                            </Link>
+                        ))}
+                    </>
+                )}
             </nav>
 
             {/* Footer / User Profile */}

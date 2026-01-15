@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
 
+/**
+ * GET /api/assignments
+ * Returns assignments for a subscription.
+ */
 export async function GET(request: Request) {
     const { response } = await requireAuth();
     if (response) return response;
@@ -16,11 +20,15 @@ export async function GET(request: Request) {
     try {
         const data = await db.assignments.findBySubscription(subId);
         return NextResponse.json(data);
-    } catch (error) {
+    } catch {
         return NextResponse.json({ error: 'Failed to fetch assignments' }, { status: 500 });
     }
 }
 
+/**
+ * POST /api/assignments
+ * Creates a new seat assignment.
+ */
 export async function POST(request: Request) {
     const { response } = await requireAuth();
     if (response) return response;
@@ -29,12 +37,15 @@ export async function POST(request: Request) {
         const body = await request.json();
         const newAssignment = await db.assignments.create(body);
         return NextResponse.json(newAssignment, { status: 201 });
-    } catch (error) {
-        console.error('API Error:', error);
+    } catch {
         return NextResponse.json({ error: 'Failed to assign seat' }, { status: 500 });
     }
 }
 
+/**
+ * DELETE /api/assignments
+ * Removes a seat assignment.
+ */
 export async function DELETE(request: Request) {
     const { response } = await requireAuth();
     if (response) return response;
@@ -49,7 +60,7 @@ export async function DELETE(request: Request) {
     try {
         await db.assignments.delete(id);
         return NextResponse.json({ success: true });
-    } catch (error) {
+    } catch {
         return NextResponse.json({ error: 'Failed to delete assignment' }, { status: 500 });
     }
 }

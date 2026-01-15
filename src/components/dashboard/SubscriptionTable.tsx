@@ -44,9 +44,9 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
         if (searchTerm) {
             const lower = searchTerm.toLowerCase();
             result = result.filter(sub =>
-                sub.name.toLowerCase().includes(lower) ||
-                sub.category.toLowerCase().includes(lower) ||
-                sub.owner.name.toLowerCase().includes(lower)
+                sub.name?.toLowerCase().includes(lower) ||
+                sub.category?.toLowerCase().includes(lower) ||
+                sub.owner?.name?.toLowerCase().includes(lower)
             );
         }
 
@@ -58,8 +58,8 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
 
                 switch (sortColumn) {
                     case 'name':
-                        aVal = a.name.toLowerCase();
-                        bVal = b.name.toLowerCase();
+                        aVal = (a.name || '').toLowerCase();
+                        bVal = (b.name || '').toLowerCase();
                         break;
                     case 'vendor':
                         aVal = ((a as any).vendorName || '').toLowerCase();
@@ -78,12 +78,12 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                         bVal = b.renewalDate ? new Date(b.renewalDate).getTime() : 0;
                         break;
                     case 'utilization':
-                        aVal = a.seats.total > 0 ? a.seats.used / a.seats.total : 0;
-                        bVal = b.seats.total > 0 ? b.seats.used / b.seats.total : 0;
+                        aVal = a.seats?.total > 0 ? (a.seats?.used || 0) / a.seats.total : 0;
+                        bVal = b.seats?.total > 0 ? (b.seats?.used || 0) / b.seats.total : 0;
                         break;
                     case 'owner':
-                        aVal = a.owner.name.toLowerCase();
-                        bVal = b.owner.name.toLowerCase();
+                        aVal = (a.owner?.name || '').toLowerCase();
+                        bVal = (b.owner?.name || '').toLowerCase();
                         break;
                     default:
                         return 0;

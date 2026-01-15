@@ -1,12 +1,20 @@
 import { RawInvoice } from './types';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL;
 const SITE_NAME = 'Subscription Dashboard';
 
+/**
+ * Extracts raw invoice data from images using AI vision analysis.
+ * Transcribes invoice content exactly as it appears without summarization.
+ */
 export async function extractRawInvoiceData(images: string[]): Promise<RawInvoice> {
     if (!OPENROUTER_API_KEY) {
         throw new Error("Missing OpenRouter API Key");
+    }
+
+    if (!SITE_URL) {
+        throw new Error("Missing application URL configuration");
     }
 
     const prompt = `
@@ -50,7 +58,7 @@ export async function extractRawInvoiceData(images: string[]): Promise<RawInvoic
         ...images.map(img => ({
             type: "image_url",
             image_url: {
-                url: img // Expecting base64 data URL
+                url: img
             }
         }))
     ];
@@ -78,8 +86,7 @@ export async function extractRawInvoiceData(images: string[]): Promise<RawInvoic
 
     try {
         return JSON.parse(cleanJson) as RawInvoice;
-    } catch (e) {
-        console.error("Failed to parse RAW AI response", cleanJson);
+    } catch {
         throw new Error("Invalid JSON from AI");
     }
 }

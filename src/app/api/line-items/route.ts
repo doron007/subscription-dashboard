@@ -5,7 +5,10 @@ import { resolveBillingMonth, parsePeriodFromDescription } from '@/lib/periodPar
 import { format } from 'date-fns';
 import { requireAuth } from '@/lib/api-auth';
 
-// GET /api/line-items - Get all line items with invoice info and resolved billing month
+/**
+ * GET /api/line-items
+ * Returns all line items with invoice info and resolved billing month.
+ */
 export async function GET() {
     const { response } = await requireAuth();
     if (response) return response;
@@ -35,7 +38,6 @@ export async function GET() {
             .order('total_amount', { ascending: false });
 
         if (error) {
-            console.error('Error fetching line items:', error);
             return NextResponse.json({ error: 'Failed to fetch line items' }, { status: 500 });
         }
 
@@ -59,31 +61,28 @@ export async function GET() {
                 quantity: item.quantity,
                 unitPrice: parseFloat(item.unit_price) || 0,
                 totalAmount: parseFloat(item.total_amount) || 0,
-                // Original invoice date (for reference)
                 invoiceDate,
                 invoiceNumber: item.invoice?.invoice_number,
                 vendorId: item.invoice?.vendor?.id,
                 vendorName: item.invoice?.vendor?.name || 'Unknown Vendor',
-                // Period fields
                 periodStart: item.period_start || (parsed.periodStart ? format(parsed.periodStart, 'yyyy-MM-dd') : null),
                 periodEnd: item.period_end || (parsed.periodEnd ? format(parsed.periodEnd, 'yyyy-MM-dd') : null),
-                // Manual override (if any)
                 billingMonthOverride: item.billing_month_override,
-                // Resolved billing month (the one to use for reports)
                 billingMonth,
-                // Flag indicating if this was manually overridden
                 isManualOverride: !!item.billing_month_override
             };
         });
 
         return NextResponse.json(lineItems);
-    } catch (error) {
-        console.error('[LineItemsAPI] GET Error:', error);
+    } catch {
         return NextResponse.json({ error: 'Failed to fetch line items' }, { status: 500 });
     }
 }
 
-// POST /api/line-items - Create new line item
+/**
+ * POST /api/line-items
+ * Creates a new line item.
+ */
 export async function POST(request: NextRequest) {
     const { response } = await requireAuth();
     if (response) return response;

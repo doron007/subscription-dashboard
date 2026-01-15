@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { requireAuth } from '@/lib/api-auth';
 
 type MoveLevel = 'invoice' | 'service' | 'lineItem';
 
@@ -7,15 +8,22 @@ interface MovePeriodRequest {
     level: MoveLevel;
     targetMonth: string; // ISO date string, e.g., "2025-08-01"
     filter: {
-        invoiceId?: string;      // for invoice level
-        serviceName?: string;    // for service level
-        sourceMonth?: string;    // for service level (to scope which items to move)
-        lineItemId?: string;     // for lineItem level
+        invoiceId?: string;
+        serviceName?: string;
+        sourceMonth?: string;
+        lineItemId?: string;
     };
 }
 
-// POST /api/line-items/move-period - Move line items to a different billing period
+/**
+ * POST /api/line-items/move-period
+ * Moves line items to a different billing period by setting billing_month_override.
+ * Supports moving at invoice, service, or individual line item level.
+ */
 export async function POST(request: NextRequest) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const body: MovePeriodRequest = await request.json();
         const { level, targetMonth, filter } = body;
@@ -33,7 +41,6 @@ export async function POST(request: NextRequest) {
 
         switch (level) {
             case 'lineItem': {
-                // Move a single line item
                 if (!filter.lineItemId) {
                     return NextResponse.json(
                         { error: 'lineItemId is required for lineItem level' },
@@ -53,7 +60,6 @@ export async function POST(request: NextRequest) {
             }
 
             case 'invoice': {
-                // Move all line items for an invoice
                 if (!filter.invoiceId) {
                     return NextResponse.json(
                         { error: 'invoiceId is required for invoice level' },
@@ -61,7 +67,6 @@ export async function POST(request: NextRequest) {
                     );
                 }
 
-                // First get the IDs of affected line items
                 const { data: items, error: fetchError } = await supabase
                     .from('sub_invoice_line_items')
                     .select('id')
@@ -83,7 +88,6 @@ export async function POST(request: NextRequest) {
             }
 
             case 'service': {
-                // Move all line items matching a service name within a source month
                 if (!filter.serviceName) {
                     return NextResponse.json(
                         { error: 'serviceName is required for service level' },
@@ -91,11 +95,6 @@ export async function POST(request: NextRequest) {
                     );
                 }
 
-                // For service level, we need to find line items that:
-                // 1. Match the service name pattern in description
-                // 2. Are currently assigned to the source month (if specified)
-
-                // First, get all line items with their current billing assignments
                 const { data: allItems, error: fetchError } = await supabase
                     .from('sub_invoice_line_items')
                     .select(`
@@ -110,11 +109,9 @@ export async function POST(request: NextRequest) {
                 if (fetchError) throw fetchError;
 
                 if (allItems && allItems.length > 0) {
-                    // Filter by source month if specified
                     let itemsToUpdate = allItems;
 
                     if (filter.sourceMonth) {
-                        // Import the resolution logic dynamically to check current billing month
                         const { resolveBillingMonth } = await import('@/lib/periodParser');
 
                         itemsToUpdate = allItems.filter((item: any) => {
@@ -159,24 +156,28 @@ export async function POST(request: NextRequest) {
             affectedIds
         });
 
-    } catch (error) {
-        console.error('[MovePeriodAPI] Error:', error);
+    } catch {
         return NextResponse.json(
-            { error: 'Failed to move period', details: String(error) },
+            { error: 'Failed to move period' },
             { status: 500 }
         );
     }
 }
 
-// DELETE /api/line-items/move-period - Clear manual override (revert to automatic)
+/**
+ * DELETE /api/line-items/move-period
+ * Clears billing_month_override to revert to automatic period detection.
+ */
 export async function DELETE(request: NextRequest) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const { searchParams } = new URL(request.url);
         const lineItemId = searchParams.get('lineItemId');
         const invoiceId = searchParams.get('invoiceId');
 
         if (lineItemId) {
-            // Clear override for a single line item
             const { error } = await supabase
                 .from('sub_invoice_line_items')
                 .update({ billing_month_override: null })
@@ -187,7 +188,6 @@ export async function DELETE(request: NextRequest) {
         }
 
         if (invoiceId) {
-            // Clear overrides for all line items in an invoice
             const { data, error } = await supabase
                 .from('sub_invoice_line_items')
                 .update({ billing_month_override: null })
@@ -203,10 +203,9 @@ export async function DELETE(request: NextRequest) {
             { status: 400 }
         );
 
-    } catch (error) {
-        console.error('[MovePeriodAPI] DELETE Error:', error);
+    } catch {
         return NextResponse.json(
-            { error: 'Failed to clear override', details: String(error) },
+            { error: 'Failed to clear override' },
             { status: 500 }
         );
     }

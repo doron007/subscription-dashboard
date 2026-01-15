@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, requireAdmin } from '@/lib/api-auth';
 
-// GET /api/services/[id] - Get service details
+/**
+ * GET /api/services/[id]
+ * Returns service details by ID.
+ */
 export async function GET(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const service = await db.services.findById(params.id);
     if (!service) {
         return NextResponse.json({ error: 'Service not found' }, { status: 404 });
@@ -13,11 +20,17 @@ export async function GET(
     return NextResponse.json(service);
 }
 
-// PUT /api/services/[id] - Update service
+/**
+ * PUT /api/services/[id]
+ * Updates service details.
+ */
 export async function PUT(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const body = await request.json();
     const service = await db.services.update(params.id, body);
     if (!service) {
@@ -26,16 +39,21 @@ export async function PUT(
     return NextResponse.json(service);
 }
 
-// DELETE /api/services/[id] - Cascade delete service and related line items
+/**
+ * DELETE /api/services/[id]
+ * Cascade deletes service and related line items. Requires admin access.
+ */
 export async function DELETE(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const { response } = await requireAdmin();
+    if (response) return response;
+
     const url = new URL(request.url);
     const confirmDelete = url.searchParams.get('confirm') === 'true';
 
     if (!confirmDelete) {
-        // Return impact preview
         const impact = await db.services.getCascadeImpact(params.id);
         return NextResponse.json({
             requiresConfirmation: true,
@@ -44,7 +62,6 @@ export async function DELETE(
         });
     }
 
-    // Perform cascade delete
     const result = await db.services.delete(params.id);
     if (!result.success) {
         return NextResponse.json({ error: 'Failed to delete service' }, { status: 500 });

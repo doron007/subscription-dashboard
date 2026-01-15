@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
+/**
+ * GET /auth/callback
+ * Handles OAuth callback and exchanges authorization code for session.
+ */
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
@@ -8,21 +12,12 @@ export async function GET(request: Request) {
 
   if (code) {
     const supabase = await createClient();
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (error) {
-      console.error('Auth callback error:', error);
       return NextResponse.redirect(
         new URL('/login?error=callback_failed', requestUrl.origin)
       );
-    }
-
-    // Log successful auth for debugging
-    if (data.user) {
-      console.log('Auth callback success:', {
-        user: data.user.email,
-        provider: data.user.app_metadata?.provider,
-      });
     }
   }
 

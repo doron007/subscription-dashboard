@@ -1,12 +1,20 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth } from '@/lib/api-auth';
 
+/**
+ * PUT /api/invoices/[id]
+ * Updates invoice details.
+ */
 export async function PUT(
-    request: Request,
+    _request: Request,
     { params }: { params: { id: string } }
 ) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
-        const body = await request.json();
+        const body = await _request.json();
         const updatedInvoice = await db.invoices.update(params.id, body);
 
         if (!updatedInvoice) {
@@ -14,8 +22,7 @@ export async function PUT(
         }
 
         return NextResponse.json(updatedInvoice);
-    } catch (error) {
-        console.error('Failed to update invoice:', error);
+    } catch {
         return NextResponse.json({ error: 'Failed to update invoice' }, { status: 500 });
     }
 }

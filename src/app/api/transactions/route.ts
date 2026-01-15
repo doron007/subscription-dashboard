@@ -1,29 +1,22 @@
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/api-auth';
 import { Transaction } from '@/types';
 
-// Mock in-memory storage for now (would be DB in real app)
-let transactions: Transaction[] = [
-    {
-        id: 'tx-1',
-        subscriptionId: 'sub-1', // Assuming this matches some ID
-        date: '2024-01-01',
-        amount: 100,
-        currency: 'USD',
-        status: 'Posted',
-        description: 'Monthly Subscription - Jan'
-    },
-    {
-        id: 'tx-2',
-        subscriptionId: 'sub-1',
-        date: '2024-02-01',
-        amount: 120, // Variation
-        currency: 'USD',
-        status: 'Posted',
-        description: 'Monthly Subscription - Feb'
-    }
-];
+/**
+ * In-memory transaction storage.
+ * Note: This is mock data for development. In production, transactions
+ * would be stored in the database.
+ */
+const transactions: Transaction[] = [];
 
+/**
+ * GET /api/transactions
+ * Returns transactions, optionally filtered by subscription ID.
+ */
 export async function GET(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const { searchParams } = new URL(request.url);
     const subscriptionId = searchParams.get('subscriptionId');
 
@@ -35,10 +28,16 @@ export async function GET(request: Request) {
     return NextResponse.json(transactions);
 }
 
+/**
+ * POST /api/transactions
+ * Creates a new transaction.
+ */
 export async function POST(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const body = await request.json();
-        // Validation would go here
 
         const newTransaction: Transaction = {
             id: `tx-${Date.now()}`,
@@ -49,7 +48,7 @@ export async function POST(request: Request) {
 
         transactions.push(newTransaction);
         return NextResponse.json(newTransaction);
-    } catch (error) {
+    } catch {
         return NextResponse.json({ error: 'Failed to create transaction' }, { status: 500 });
     }
 }

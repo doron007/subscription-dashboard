@@ -1,14 +1,28 @@
 import { NextResponse } from 'next/server';
-
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-const SITE_NAME = 'Subscription Dashboard';
-
+import { requireAuth } from '@/lib/api-auth';
 import { runInvoiceAnalysisPipeline } from '@/lib/analysis/pipeline';
 
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL;
+const SITE_NAME = 'Subscription Dashboard';
+
+/**
+ * POST /api/analyze
+ * Analyzes invoice images or transaction data using AI to extract structured information.
+ * Supports two modes:
+ * - Vision mode: Analyzes invoice images (PDF/images) using AI vision
+ * - Text mode: Analyzes CSV transaction data to identify subscriptions
+ */
 export async function POST(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     if (!OPENROUTER_API_KEY) {
         return NextResponse.json({ error: 'OpenRouter API Key not configured' }, { status: 500 });
+    }
+
+    if (!SITE_URL) {
+        return NextResponse.json({ error: 'Application URL not configured' }, { status: 500 });
     }
 
     try {
@@ -18,13 +32,11 @@ export async function POST(request: Request) {
         let parsedData;
 
         if (images && Array.isArray(images)) {
-            // NEW VISION PIPELINE
-            console.log(`[Pipeline] Processing ${images.length} images...`);
+            // Vision pipeline for invoice image analysis
 
             const result = await runInvoiceAnalysisPipeline(images);
 
             if (!result.success || !result.data) {
-                console.error("[Pipeline] Failed:", result.error);
                 return NextResponse.json({
                     error: 'Analysis Failed',
                     details: result.error,
@@ -32,25 +44,15 @@ export async function POST(request: Request) {
                 }, { status: 500 });
             }
 
-            // Return array format to match frontend expectation (even though it's single)
-            // The frontend likely expects { candidates: [...] }
-            // For the new pipeline, we'll return { analysis: result.data } to distinguish it 
-            // or we adapt `result.data` to look like a candidate if we want quick compat, 
-            // but we really want the rich data.
-            // Let's return a distinct shape for clarity.
             return NextResponse.json({
                 success: true,
-                analysis: result.data, // AnalyzedInvoice
+                analysis: result.data,
                 logs: result.context.logs
             });
 
-            // Log for debugging
-            console.log("[Pipeline] Success. Logs:", JSON.stringify(result.context.logs, null, 2));
-
         } else if (transactions) {
-            // TEXT PATH (Legacy/Existing)
-            // We defaults to gemini-2.0-flash-001 for speed/cost/vision
-            let model = "google/gemini-2.0-flash-001";
+            // Text-based transaction analysis for subscription detection
+            const model = "google/gemini-2.0-flash-001";
 
             if (!Array.isArray(transactions)) {
                 return NextResponse.json({ error: 'Invalid input: transactions array required' }, { status: 400 });
@@ -100,7 +102,7 @@ export async function POST(request: Request) {
                 Only include items with confidence > 0.5.
             `;
 
-            const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            const aiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
@@ -114,28 +116,20 @@ export async function POST(request: Request) {
                 })
             });
 
-            if (!response.ok) {
-                const err = await response.text();
-                console.error("OpenRouter Error:", err);
+            if (!aiResponse.ok) {
                 return NextResponse.json({ error: 'Failed to call AI provider' }, { status: 502 });
             }
 
-            const json = await response.json();
+            const json = await aiResponse.json();
             const aiContent = json.choices[0].message.content;
 
-            // Trace for debugging
-            console.log("--- OPENROUTER RAW RESPONSE ---");
-            console.log(aiContent);
-            console.log("-------------------------------");
-
-            // clean markdown code blocks if present
+            // Clean markdown code blocks if present
             const cleanJson = aiContent.replace(/```json/g, '').replace(/```/g, '').trim();
 
             try {
                 parsedData = JSON.parse(cleanJson);
-            } catch (e) {
-                console.error("JSON Parse Error. Raw AI Output:", aiContent);
-                return NextResponse.json({ error: 'Failed to parse AI response', details: (e as Error).message }, { status: 500 });
+            } catch {
+                return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 500 });
             }
         } else {
             return NextResponse.json({ error: 'Invalid input: Provide transactions (CSV) or images (PDF)' }, { status: 400 });
@@ -143,8 +137,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({ candidates: parsedData });
 
-    } catch (error) {
-        console.error('Analysis Error:', error);
+    } catch {
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }

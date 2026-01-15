@@ -88,7 +88,6 @@ export async function analyzeCSVFormat(
         });
 
         if (!response.ok) {
-            console.error("[SmartMapper] AI call failed, using heuristic");
             return heuristicMapping(headers, sampleRows);
         }
 
@@ -99,11 +98,9 @@ export async function analyzeCSVFormat(
         const cleanJson = aiContent.replace(/```json/g, '').replace(/```/g, '').trim();
         const result = JSON.parse(cleanJson) as MappingResult;
 
-        console.log("[SmartMapper] AI mapping result:", result.formatType, result.confidence);
         return result;
 
-    } catch (error) {
-        console.error("[SmartMapper] Error:", error);
+    } catch {
         return heuristicMapping(headers, sampleRows);
     }
 }

@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth } from '@/lib/api-auth';
 import { parseImportCSV, extractPeriodFromDescription, extractCleanServiceName } from '@/lib/import/parseCSV';
-import { analyzeCSVFormat, transformToStandard, type StandardLineItem } from '@/lib/import/smartMapper';
+import { analyzeCSVFormat, transformToStandard } from '@/lib/import/smartMapper';
 import type {
     ImportExecutionResult,
     ImportDecision,
     ParsedInvoice,
-    ParsedLineItem,
     MergeStrategy,
-    ImportAction,
-    LineItemAction
+    ImportAction
 } from '@/lib/import/types';
 
 // Generate logo URL from vendor name
@@ -43,7 +42,15 @@ function parseServiceMonth(serviceMonth: string, referenceYear: number): string 
     return `${referenceYear}-${month}-01`;
 }
 
+/**
+ * POST /api/import/execute
+ * Executes the import of CSV data based on user decisions from the analyze step.
+ * Creates/updates vendors, subscriptions, invoices, and line items.
+ */
 export async function POST(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const body = await request.json();
         const { csvData, decisions, globalStrategy = 'csv_wins' } = body as {
@@ -59,8 +66,6 @@ export async function POST(request: Request) {
             );
         }
 
-        console.log(`[ImportExecute] Executing import with ${decisions?.length || 0} decisions`);
-
         // Get headers and detect format
         const headers = csvData.length > 0 ? Object.keys(csvData[0]) : [];
         const lowerHeaders = headers.map(h => h.toLowerCase().trim());
@@ -71,14 +76,11 @@ export async function POST(request: Request) {
         let invoices: ParsedInvoice[];
 
         if (isLegacyFormat) {
-            console.log(`[ImportExecute] Using legacy PBS/SAP parser`);
             const parsed = parseImportCSV(csvData);
             invoices = parsed.invoices;
         } else {
-            console.log(`[ImportExecute] Using smart mapper for non-legacy format`);
-            // Use smart mapping
+            // Use smart mapping for non-legacy formats
             const mappingResult = await analyzeCSVFormat(headers, csvData.slice(0, 10));
-            console.log(`[ImportExecute] Format: ${mappingResult.formatType} (${mappingResult.confidence})`);
 
             const standardItems = transformToStandard(csvData, mappingResult.mapping, mappingResult.transformRules);
 
@@ -114,7 +116,6 @@ export async function POST(request: Request) {
                 });
             }
             invoices = Array.from(invoiceMap.values());
-            console.log(`[ImportExecute] Converted ${standardItems.length} items to ${invoices.length} invoices`);
         }
 
         // Build decision map for quick lookup
@@ -143,7 +144,6 @@ export async function POST(request: Request) {
                 if (decision?.action === 'skip' || shouldSkipVoided) {
                     result.skipped.invoices++;
                     result.skipped.lineItems += parsedInvoice.lineItems.length;
-                    console.log(`[ImportExecute] Skipping invoice ${parsedInvoice.invoiceNumber}`);
                     continue;
                 }
 
@@ -158,7 +158,6 @@ export async function POST(request: Request) {
                         logoUrl: generateLogoUrl(parsedInvoice.vendor)
                     });
                     result.created.vendors++;
-                    console.log(`[ImportExecute] Created vendor: ${vendor.name}`);
                 }
 
                 // 2. Find or create subscription/agreement
@@ -172,7 +171,6 @@ export async function POST(request: Request) {
                         paymentMethod: 'Invoice',
                         logo: vendor.logoUrl
                     });
-                    console.log(`[ImportExecute] Created subscription: ${subscription?.name}`);
                 }
 
                 if (!subscription) {
@@ -205,7 +203,6 @@ export async function POST(request: Request) {
                             status: parsedInvoice.paidDate ? 'Paid' : 'Pending'
                         });
                         result.updated.invoices++;
-                        console.log(`[ImportExecute] Updated invoice: ${parsedInvoice.invoiceNumber}`);
 
                         // Delete existing line items for clean re-import
                         await db.invoices.deleteLineItems(invoice.id);
@@ -222,7 +219,6 @@ export async function POST(request: Request) {
                         status: parsedInvoice.paidDate ? 'Paid' : 'Pending'
                     });
                     result.created.invoices++;
-                    console.log(`[ImportExecute] Created invoice: ${parsedInvoice.invoiceNumber}`);
                 }
 
                 // 4. Process line items
@@ -328,23 +324,17 @@ export async function POST(request: Request) {
                     result.created.lineItems += dbLineItems.length;
                 }
 
-                console.log(`[ImportExecute] Processed ${dbLineItems.length} line items for invoice ${parsedInvoice.invoiceNumber}`);
-
             } catch (invoiceError) {
-                console.error(`[ImportExecute] Error processing invoice ${parsedInvoice.invoiceNumber}:`, invoiceError);
                 result.errors.push(`Invoice ${parsedInvoice.invoiceNumber}: ${(invoiceError as Error).message}`);
             }
         }
 
         result.success = result.errors.length === 0;
 
-        console.log(`[ImportExecute] Import complete:`, result);
-
         return NextResponse.json(result);
-    } catch (error) {
-        console.error('[ImportExecute] Error:', error);
+    } catch {
         return NextResponse.json(
-            { error: 'Import failed', details: (error as Error).message },
+            { error: 'Import failed' },
             { status: 500 }
         );
     }

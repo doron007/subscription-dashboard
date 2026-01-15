@@ -36,12 +36,37 @@ export async function requireAdmin() {
     .eq('id', user!.id)
     .single();
 
-  if (!profile || profile.role !== 'admin') {
+  if (!profile || (profile.role !== 'admin' && profile.role !== 'super_admin')) {
     return {
       user: null,
       supabase: null,
       profile: null,
       response: NextResponse.json({ error: 'Forbidden: Admin access required' }, { status: 403 }),
+    };
+  }
+
+  return { user, supabase, profile: profile as Profile, response: null };
+}
+
+export async function requireSuperAdmin() {
+  const { user, supabase, response } = await requireAuth();
+
+  if (response) {
+    return { user: null, supabase: null, profile: null, response };
+  }
+
+  const { data: profile } = await supabase!
+    .from('sub_profiles')
+    .select('*')
+    .eq('id', user!.id)
+    .single();
+
+  if (!profile || profile.role !== 'super_admin') {
+    return {
+      user: null,
+      supabase: null,
+      profile: null,
+      response: NextResponse.json({ error: 'Forbidden: Super admin access required' }, { status: 403 }),
     };
   }
 

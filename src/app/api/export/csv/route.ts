@@ -1,10 +1,17 @@
 import { NextRequest } from 'next/server';
+import { requireAuth } from '@/lib/api-auth';
 
-// Opt out of static generation
 export const dynamic = 'force-dynamic';
 
-// GET /api/export/csv?data=base64&filename=name.csv - Download CSV file
+/**
+ * GET /api/export/csv
+ * Downloads CSV data as a file attachment.
+ * Accepts base64-encoded CSV content and returns it as a downloadable file.
+ */
 export async function GET(request: NextRequest) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const searchParams = request.nextUrl.searchParams;
         const encodedData = searchParams.get('data');
@@ -38,8 +45,7 @@ export async function GET(request: NextRequest) {
                 'X-Content-Type-Options': 'nosniff',
             },
         });
-    } catch (error) {
-        console.error('[ExportCSV] Error:', error);
+    } catch {
         return new Response(JSON.stringify({ error: 'Failed to generate CSV' }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },

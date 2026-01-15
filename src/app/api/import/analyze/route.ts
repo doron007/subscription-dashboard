@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth } from '@/lib/api-auth';
 import { parseImportCSV, extractPeriodFromDescription } from '@/lib/import/parseCSV';
-import { analyzeCSVFormat, transformToStandard, groupTransactionsAsInvoices, type StandardLineItem } from '@/lib/import/smartMapper';
+import { analyzeCSVFormat, transformToStandard, type StandardLineItem } from '@/lib/import/smartMapper';
 import type {
     ImportAnalysis,
     InvoiceDiff,
@@ -327,7 +328,15 @@ function isLegacyFormat(headers: string[]): boolean {
         lowerHeaders.some(h => h.includes('line item'));
 }
 
+/**
+ * POST /api/import/analyze
+ * Analyzes CSV data to preview import changes before execution.
+ * Detects format type, maps columns, and compares against existing data.
+ */
 export async function POST(request: Request) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     try {
         const body = await request.json();
         const { csvData, filename } = body;
@@ -339,11 +348,8 @@ export async function POST(request: Request) {
             );
         }
 
-        console.log(`[ImportAnalyze] Analyzing ${csvData.length} rows from ${filename}`);
-
         // Get headers from first row
         const headers = csvData.length > 0 ? Object.keys(csvData[0]) : [];
-        console.log(`[ImportAnalyze] CSV Headers: ${headers.join(', ')}`);
 
         let invoices: ParsedInvoice[];
         let vendors: string[];
@@ -352,23 +358,16 @@ export async function POST(request: Request) {
 
         // Check if this is the legacy PBS/SAP format for backwards compatibility
         if (isLegacyFormat(headers)) {
-            console.log(`[ImportAnalyze] Detected legacy SAP/PBS format, using direct parser`);
             const parsed = parseImportCSV(csvData);
             lineItems = parsed.lineItems;
             invoices = parsed.invoices;
             vendors = parsed.vendors;
         } else {
             // Use smart mapping for other formats
-            console.log(`[ImportAnalyze] Using smart AI-powered mapping`);
-
-            // Analyze format using AI
             const mappingResult = await analyzeCSVFormat(headers, csvData.slice(0, 10));
-            console.log(`[ImportAnalyze] Format detected: ${mappingResult.formatType} (confidence: ${mappingResult.confidence})`);
-            console.log(`[ImportAnalyze] Reasoning: ${mappingResult.reasoning}`);
 
             // Transform to standard format
             const standardItems = transformToStandard(csvData, mappingResult.mapping, mappingResult.transformRules);
-            console.log(`[ImportAnalyze] Transformed ${standardItems.length} items to standard format`);
 
             // Convert to parsed format for analysis
             const converted = standardItemsToParsedInvoices(standardItems);
@@ -391,8 +390,6 @@ export async function POST(request: Request) {
                 rowCount: csvData.length
             };
         }
-
-        console.log(`[ImportAnalyze] Parsed ${invoices.length} invoices, ${lineItems.length} line items`);
 
         // Analyze vendors
         const vendorAnalysis = await Promise.all(
@@ -461,16 +458,10 @@ export async function POST(request: Request) {
             ...(smartMeta && { smartMeta })
         };
 
-        console.log(`[ImportAnalyze] Analysis complete:`, summary);
-        if (smartMeta) {
-            console.log(`[ImportAnalyze] Smart import meta:`, smartMeta);
-        }
-
         return NextResponse.json(analysis);
-    } catch (error) {
-        console.error('[ImportAnalyze] Error:', error);
+    } catch {
         return NextResponse.json(
-            { error: 'Analysis failed', details: (error as Error).message },
+            { error: 'Analysis failed' },
             { status: 500 }
         );
     }

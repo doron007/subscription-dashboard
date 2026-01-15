@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
 
+/**
+ * GET /api/subscriptions
+ * Returns all subscriptions.
+ */
 export async function GET() {
     const { response } = await requireAuth();
     if (response) return response;
@@ -9,11 +13,15 @@ export async function GET() {
     try {
         const data = await db.subscriptions.findAll();
         return NextResponse.json(data);
-    } catch (error) {
+    } catch {
         return NextResponse.json({ error: 'Failed to fetch subscriptions' }, { status: 500 });
     }
 }
 
+/**
+ * POST /api/subscriptions
+ * Creates a new subscription.
+ */
 export async function POST(request: Request) {
     const { response } = await requireAuth();
     if (response) return response;
@@ -22,9 +30,7 @@ export async function POST(request: Request) {
         const body = await request.json();
         const newSubscription = await db.subscriptions.create(body);
         return NextResponse.json(newSubscription, { status: 201 });
-    } catch (error) {
-        console.error('API Error:', error);
-        const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-        return NextResponse.json({ error: errorMessage }, { status: 500 });
+    } catch {
+        return NextResponse.json({ error: 'Failed to create subscription' }, { status: 500 });
     }
 }

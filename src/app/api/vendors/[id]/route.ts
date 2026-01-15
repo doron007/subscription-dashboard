@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth, requireAdmin } from '@/lib/api-auth';
 
-// GET /api/vendors/[id] - Get vendor details
+/**
+ * GET /api/vendors/[id]
+ * Returns vendor details by ID.
+ */
 export async function GET(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const vendor = await db.vendors.findById(params.id);
     if (!vendor) {
         return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
@@ -13,11 +20,17 @@ export async function GET(
     return NextResponse.json(vendor);
 }
 
-// PUT /api/vendors/[id] - Update vendor
+/**
+ * PUT /api/vendors/[id]
+ * Updates vendor details.
+ */
 export async function PUT(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
     const body = await request.json();
     const vendor = await db.vendors.update(params.id, body);
     if (!vendor) {
@@ -26,12 +39,17 @@ export async function PUT(
     return NextResponse.json(vendor);
 }
 
-// DELETE /api/vendors/[id] - Cascade delete vendor
+/**
+ * DELETE /api/vendors/[id]
+ * Cascade deletes vendor and all related data. Requires admin access.
+ */
 export async function DELETE(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
-    // Check for cascade impact first (for confirmation in UI)
+    const { response } = await requireAdmin();
+    if (response) return response;
+
     const url = new URL(request.url);
     const confirmDelete = url.searchParams.get('confirm') === 'true';
 
@@ -45,7 +63,6 @@ export async function DELETE(
         });
     }
 
-    // Perform cascade delete
     const result = await db.vendors.delete(params.id);
     if (!result.success) {
         return NextResponse.json({ error: 'Failed to delete vendor' }, { status: 500 });
