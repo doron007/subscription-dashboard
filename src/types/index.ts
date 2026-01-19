@@ -1,6 +1,6 @@
 export type SubscriptionStatus = 'Active' | 'Review' | 'Cancelled';
 export type PaymentMethod = 'Credit Card' | 'PO' | 'Invoice' | 'ACH';
-export type BillingCycle = 'Monthly' | 'Annual';
+export type BillingCycle = 'Monthly' | 'Annual' | 'Quarterly' | 'As Needed';
 
 export interface Employee {
     id: string;
@@ -38,6 +38,7 @@ export interface Vendor {
     website?: string;
     contactEmail?: string;
     logoUrl?: string;
+    category?: string; // AI-populated vendor category
 }
 
 export interface SubscriptionService {

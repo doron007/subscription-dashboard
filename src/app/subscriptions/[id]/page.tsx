@@ -310,8 +310,8 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                                                 <input type="text" name="name" required value={formData.name} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" />
                                             </div>
                                             <div>
-                                                <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
-                                                <input type="text" name="category" required value={formData.category} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                <label className="block text-sm font-medium text-slate-700 mb-1">Category <span className="text-slate-400 font-normal">(optional)</span></label>
+                                                <input type="text" name="category" value={formData.category} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g. CRM, Security, Productivity" />
                                             </div>
                                             <div>
                                                 <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
@@ -327,36 +327,22 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
 
                                 <hr className="border-slate-100" />
 
-                                {/* Section: Plan & Usage */}
+                                {/* Section: Plan & Billing */}
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-x-8 gap-y-4">
                                     <div className="lg:col-span-1">
-                                        <h3 className="text-lg font-medium text-slate-900">Plan & Usage</h3>
-                                        <p className="mt-1 text-sm text-slate-500">Manage billing cycles, seat limits, and recurring costs.</p>
+                                        <h3 className="text-lg font-medium text-slate-900">Billing</h3>
+                                        <p className="mt-1 text-sm text-slate-500">Billing cycle and renewal settings.</p>
                                     </div>
                                     <div className="lg:col-span-2">
                                         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                                             <div>
-                                                <label className="block text-sm font-medium text-slate-700 mb-1">Total Cost</label>
-                                                <div className="relative">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                                                    <input type="number" name="cost" required value={formData.cost} onChange={handleChange} className="w-full pl-7 rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500 font-medium text-slate-900" />
-                                                </div>
-                                            </div>
-                                            <div>
                                                 <label className="block text-sm font-medium text-slate-700 mb-1">Billing Cycle</label>
                                                 <select name="billingCycle" value={formData.billingCycle} onChange={handleChange as any} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500 bg-white">
                                                     <option value="Monthly">Monthly</option>
+                                                    <option value="Quarterly">Quarterly</option>
                                                     <option value="Annual">Annual</option>
+                                                    <option value="As Needed">As Needed</option>
                                                 </select>
-                                            </div>
-                                            <div className="md:col-span-2 border-t border-slate-100 my-2"></div>
-
-                                            <div>
-                                                <label className="block text-sm font-medium text-slate-700 mb-1">Total Licenses / Seats</label>
-                                                <div className="relative">
-                                                    <Box className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                                                    <input type="number" name="seatsTotal" value={formData.seatsTotal} onChange={handleChange} placeholder="Unlimited" className="w-full pl-9 rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" />
-                                                </div>
                                             </div>
                                             <div className="flex items-center">
                                                 <div className="flex items-center h-full pt-6">
@@ -411,12 +397,12 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                                     <div className="lg:col-span-2">
                                         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                                             <div>
-                                                <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name</label>
-                                                <input type="text" name="ownerName" required value={formData.ownerName} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name <span className="text-slate-400 font-normal">(optional)</span></label>
+                                                <input type="text" name="ownerName" value={formData.ownerName} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" placeholder="John Doe" />
                                             </div>
                                             <div>
                                                 <label className="block text-sm font-medium text-slate-700 mb-1">Owner Email</label>
-                                                <input type="email" name="ownerEmail" required value={formData.ownerEmail} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                <input type="email" name="ownerEmail" value={formData.ownerEmail} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" placeholder="it@downingwell.com" />
                                             </div>
                                         </div>
                                     </div>
@@ -433,8 +419,9 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
                                     <div className="lg:col-span-2">
                                         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                                             <div>
-                                                <label className="block text-sm font-medium text-slate-700 mb-1">Next Renewal Date</label>
-                                                <input type="date" name="renewalDate" required value={formData.renewalDate} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                <label className="block text-sm font-medium text-slate-700 mb-1">Next Renewal Date <span className="text-slate-400 font-normal">(optional)</span></label>
+                                                <input type="date" name="renewalDate" value={formData.renewalDate} onChange={handleChange} className="w-full rounded-lg border-slate-200 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                <p className="mt-1 text-xs text-slate-500">Leave empty for subscriptions with variable renewal schedules</p>
                                             </div>
                                         </div>
                                     </div>

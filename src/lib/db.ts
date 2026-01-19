@@ -22,7 +22,8 @@ export const db = {
                 name: data.name,
                 website: data.website,
                 contactEmail: data.contact_email,
-                logoUrl: data.logo_url
+                logoUrl: data.logo_url,
+                category: data.category
             };
         },
 
@@ -33,7 +34,8 @@ export const db = {
                     name: vendor.name,
                     website: vendor.website,
                     contact_email: vendor.contactEmail,
-                    logo_url: vendor.logoUrl
+                    logo_url: vendor.logoUrl,
+                    category: vendor.category
                 })
                 .select()
                 .single();
@@ -44,7 +46,8 @@ export const db = {
                 name: data.name,
                 website: data.website,
                 contactEmail: data.contact_email,
-                logoUrl: data.logo_url
+                logoUrl: data.logo_url,
+                category: data.category
             };
         },
 
@@ -84,6 +87,7 @@ export const db = {
                     website: row.website,
                     contactEmail: row.contact_email,
                     logoUrl: row.logo_url,
+                    category: row.category,
                     subscriptionCount: subCount || 0,
                     invoiceCount,
                     totalSpend
@@ -106,7 +110,8 @@ export const db = {
                 name: data.name,
                 website: data.website,
                 contactEmail: data.contact_email,
-                logoUrl: data.logo_url
+                logoUrl: data.logo_url,
+                category: data.category
             };
         },
 
@@ -119,6 +124,7 @@ export const db = {
             if (vendor.website !== undefined) updatePayload.website = vendor.website;
             if (vendor.contactEmail !== undefined) updatePayload.contact_email = vendor.contactEmail;
             if (vendor.logoUrl !== undefined) updatePayload.logo_url = vendor.logoUrl;
+            if (vendor.category !== undefined) updatePayload.category = vendor.category;
 
             const { data, error } = await supabase
                 .from('sub_vendors')
@@ -136,7 +142,8 @@ export const db = {
                 name: data.name,
                 website: data.website,
                 contactEmail: data.contact_email,
-                logoUrl: data.logo_url
+                logoUrl: data.logo_url,
+                category: data.category
             };
         },
 

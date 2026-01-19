@@ -15,13 +15,13 @@ export function SubscriptionForm() {
         category: '',
         cost: 0,
         renewalDate: '',
-        billingCycle: 'Annual' as BillingCycle,
+        billingCycle: 'Monthly' as BillingCycle,
         paymentMethod: 'Credit Card' as PaymentMethod,
         paymentDetails: '',
         autoRenewal: true,
         lineItems: [] as LineItem[],
         ownerName: '',
-        ownerEmail: '',
+        ownerEmail: 'it@downingwell.com', // Default owner email
     });
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -88,24 +88,11 @@ export function SubscriptionForm() {
                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
                     <input
-                        type="text" name="category" required
+                        type="text" name="category"
                         value={formData.category} onChange={handleChange}
                         className="w-full rounded-lg border-slate-200 focus:border-slate-500 focus:ring-slate-500"
-                        placeholder="e.g. CRM"
+                        placeholder="e.g. CRM (optional - AI can auto-fill)"
                     />
-                </div>
-
-                {/* Cost */}
-                <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Cost</label>
-                    <div className="relative">
-                        <span className="absolute left-3 top-2.5 text-slate-500">$</span>
-                        <input
-                            type="number" name="cost" required min="0"
-                            value={formData.cost} onChange={handleChange}
-                            className="w-full pl-7 rounded-lg border-slate-200 focus:border-slate-500 focus:ring-slate-500"
-                        />
-                    </div>
                 </div>
 
                 {/* Billing Cycle */}
@@ -116,16 +103,18 @@ export function SubscriptionForm() {
                         value={formData.billingCycle} onChange={handleChange}
                         className="w-full rounded-lg border-slate-200 focus:border-slate-500 focus:ring-slate-500"
                     >
-                        <option value="Annual">Annual</option>
                         <option value="Monthly">Monthly</option>
+                        <option value="Quarterly">Quarterly</option>
+                        <option value="Annual">Annual</option>
+                        <option value="As Needed">As Needed</option>
                     </select>
                 </div>
 
                 {/* Renewal Date */}
                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Next Renewal</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Next Renewal <span className="text-slate-400 font-normal">(optional)</span></label>
                     <input
-                        type="date" name="renewalDate" required
+                        type="date" name="renewalDate"
                         value={formData.renewalDate} onChange={handleChange}
                         className="w-full rounded-lg border-slate-200 focus:border-slate-500 focus:ring-slate-500"
                     />
@@ -176,24 +165,24 @@ export function SubscriptionForm() {
                     />
                 </div>
 
-                {/* Owner Name (Temporary) */}
+                {/* Owner Name */}
                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name <span className="text-slate-400 font-normal">(optional)</span></label>
                     <input
-                        type="text" name="ownerName" required
+                        type="text" name="ownerName"
                         value={formData.ownerName} onChange={handleChange}
                         className="w-full rounded-lg border-slate-200 focus:border-slate-500 focus:ring-slate-500"
                         placeholder="John Doe"
                     />
                 </div>
-                {/* Owner Email (Temporary) */}
+                {/* Owner Email */}
                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Owner Email</label>
                     <input
-                        type="email" name="ownerEmail" required
+                        type="email" name="ownerEmail"
                         value={formData.ownerEmail} onChange={handleChange}
                         className="w-full rounded-lg border-slate-200 focus:border-slate-500 focus:ring-slate-500"
-                        placeholder="john@company.com"
+                        placeholder="it@downingwell.com"
                     />
                 </div>
             </div>
