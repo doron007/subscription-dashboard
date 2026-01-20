@@ -1,9 +1,10 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { SubscriptionService } from '@/types';
-import { Package, Loader2, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Package, Loader2, Pencil, Trash2, ArrowUp, ArrowDown, Merge } from 'lucide-react';
 import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 import { EditEntityModal } from '@/components/modals/EditEntityModal';
+import { ServiceMergeModal } from '@/components/modals/ServiceMergeModal';
 
 interface ServicesTabProps {
     subscriptionId: string;
@@ -23,6 +24,7 @@ export function ServicesTab({ subscriptionId }: ServicesTabProps) {
     // Modal states
     const [editingService, setEditingService] = useState<SubscriptionService | null>(null);
     const [deletingService, setDeletingService] = useState<SubscriptionService | null>(null);
+    const [mergingService, setMergingService] = useState<SubscriptionService | null>(null);
     const [cascadePreview, setCascadePreview] = useState<any>(null);
     const [deleteStep, setDeleteStep] = useState<'confirm' | 'deleting'>('confirm');
 
@@ -238,6 +240,15 @@ export function ServicesTab({ subscriptionId }: ServicesTabProps) {
                                     >
                                         <Pencil className="w-4 h-4" />
                                     </button>
+                                    {services.length > 1 && (
+                                        <button
+                                            onClick={() => setMergingService(service)}
+                                            className="p-1 hover:bg-purple-50 rounded text-slate-500 hover:text-purple-600 transition-colors"
+                                            title="Merge Service"
+                                        >
+                                            <Merge className="w-4 h-4" />
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => handleDeleteClick(service)}
                                         className="p-1 hover:bg-red-50 rounded text-slate-500 hover:text-red-500 transition-colors"
@@ -282,6 +293,18 @@ export function ServicesTab({ subscriptionId }: ServicesTabProps) {
                 entityType="Service"
                 cascadeImpact={cascadePreview}
                 isDeleting={deleteStep === 'deleting'}
+            />
+
+            <ServiceMergeModal
+                isOpen={!!mergingService}
+                onClose={() => setMergingService(null)}
+                sourceService={mergingService ? {
+                    id: mergingService.id,
+                    name: mergingService.name,
+                    subscriptionId: subscriptionId
+                } : null}
+                availableServices={services.filter(s => s.id !== mergingService?.id)}
+                onMergeComplete={loadServices}
             />
         </div>
     );

@@ -51,6 +51,36 @@ export const db = {
             };
         },
 
+        // Batch find vendors by names (for large imports)
+        findByNames: async (names: string[]): Promise<Map<string, Vendor>> => {
+            if (names.length === 0) return new Map();
+
+            const { data, error } = await supabase
+                .from('sub_vendors')
+                .select('*');
+
+            if (error) {
+                console.error('Error batch finding vendors:', error);
+                return new Map();
+            }
+
+            // Create a case-insensitive lookup map
+            const result = new Map<string, Vendor>();
+            for (const row of data || []) {
+                const vendor: Vendor = {
+                    id: row.id,
+                    name: row.name,
+                    website: row.website,
+                    contactEmail: row.contact_email,
+                    logoUrl: row.logo_url,
+                    category: row.category
+                };
+                // Match by lowercase name
+                result.set(row.name.toLowerCase(), vendor);
+            }
+            return result;
+        },
+
         findAll: async (): Promise<(Vendor & { subscriptionCount: number; invoiceCount: number; totalSpend: number })[]> => {
             // Fetch vendors
             const { data: vendorData, error: vendorError } = await supabase
@@ -272,6 +302,260 @@ export const db = {
             }
 
             return { subscriptions: subIds.length, services, invoices, lineItems };
+        },
+
+        // Get merge preview - count entities that will be moved
+        getMergePreview: async (sourceVendorId: string): Promise<{
+            subscriptions: number;
+            invoices: number;
+            services: number;
+            lineItems: number;
+        }> => {
+            // Count subscriptions
+            const { count: subCount } = await supabase
+                .from('sub_subscriptions')
+                .select('*', { count: 'exact', head: true })
+                .eq('vendor_id', sourceVendorId);
+
+            // Count invoices
+            const { count: invCount } = await supabase
+                .from('sub_invoices')
+                .select('*', { count: 'exact', head: true })
+                .eq('vendor_id', sourceVendorId);
+
+            // Get subscription IDs for service count
+            const { data: subs } = await supabase
+                .from('sub_subscriptions')
+                .select('id')
+                .eq('vendor_id', sourceVendorId);
+
+            const subIds = (subs || []).map(s => s.id);
+            let svcCount = 0;
+
+            if (subIds.length > 0) {
+                const { count } = await supabase
+                    .from('sub_subscription_services')
+                    .select('*', { count: 'exact', head: true })
+                    .in('subscription_id', subIds);
+                svcCount = count || 0;
+            }
+
+            // Line items via invoices
+            const { data: invoices } = await supabase
+                .from('sub_invoices')
+                .select('id')
+                .eq('vendor_id', sourceVendorId);
+
+            const invIds = (invoices || []).map(i => i.id);
+            let liCount = 0;
+
+            if (invIds.length > 0) {
+                const { count } = await supabase
+                    .from('sub_invoice_line_items')
+                    .select('*', { count: 'exact', head: true })
+                    .in('invoice_id', invIds);
+                liCount = count || 0;
+            }
+
+            return {
+                subscriptions: subCount || 0,
+                invoices: invCount || 0,
+                services: svcCount,
+                lineItems: liCount
+            };
+        },
+
+        // Merge source vendor into target vendor
+        merge: async (
+            sourceVendorId: string,
+            targetVendorId: string,
+            newName?: string
+        ): Promise<{ success: boolean; merged: { subscriptions: number; invoices: number; services: number }; error?: string }> => {
+            try {
+                console.log(`[Vendor Merge] Starting merge: ${sourceVendorId} -> ${targetVendorId}`);
+
+                // 1. Optionally rename target vendor
+                if (newName) {
+                    const { error: renameError } = await supabase
+                        .from('sub_vendors')
+                        .update({ name: newName, updated_at: new Date().toISOString() })
+                        .eq('id', targetVendorId);
+                    if (renameError) {
+                        console.error('[Vendor Merge] Failed to rename target vendor:', renameError);
+                    }
+                }
+
+                // 2. Get target vendor's subscription (or create one if needed)
+                let targetSubscription = await db.subscriptions.findLatestByVendor(targetVendorId);
+
+                if (!targetSubscription) {
+                    // Get target vendor name for subscription
+                    const targetVendor = await db.vendors.findById(targetVendorId);
+                    if (!targetVendor) {
+                        throw new Error('Target vendor not found');
+                    }
+
+                    targetSubscription = await db.subscriptions.create({
+                        vendorId: targetVendorId,
+                        name: `${targetVendor.name} Master Agreement`,
+                        status: 'Active',
+                        billingCycle: 'Monthly',
+                        paymentMethod: 'Invoice',
+                        logo: targetVendor.logoUrl
+                    });
+
+                    if (!targetSubscription) {
+                        throw new Error('Failed to create target subscription');
+                    }
+                    console.log(`[Vendor Merge] Created new target subscription: ${targetSubscription.id}`);
+                }
+
+                // 3. Get all source subscriptions
+                const { data: sourceSubscriptions, error: srcSubError } = await supabase
+                    .from('sub_subscriptions')
+                    .select('id')
+                    .eq('vendor_id', sourceVendorId);
+
+                if (srcSubError) {
+                    console.error('[Vendor Merge] Failed to get source subscriptions:', srcSubError);
+                }
+
+                const sourceSubIds = (sourceSubscriptions || []).map(s => s.id);
+                console.log(`[Vendor Merge] Found ${sourceSubIds.length} source subscriptions`);
+
+                // 4. Move invoices from source vendor to target vendor AND target subscription
+                const { count: invoiceCount } = await supabase
+                    .from('sub_invoices')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('vendor_id', sourceVendorId);
+
+                console.log(`[Vendor Merge] Moving ${invoiceCount || 0} invoices`);
+
+                const { error: invoiceMoveError } = await supabase
+                    .from('sub_invoices')
+                    .update({
+                        vendor_id: targetVendorId,
+                        subscription_id: targetSubscription.id
+                    })
+                    .eq('vendor_id', sourceVendorId);
+
+                if (invoiceMoveError) {
+                    console.error('[Vendor Merge] Failed to move invoices:', invoiceMoveError);
+                    throw new Error(`Failed to move invoices: ${invoiceMoveError.message}`);
+                }
+
+                // Verify invoices moved
+                const { count: remainingInvoices } = await supabase
+                    .from('sub_invoices')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('vendor_id', sourceVendorId);
+
+                if (remainingInvoices && remainingInvoices > 0) {
+                    console.error(`[Vendor Merge] ${remainingInvoices} invoices still on source vendor after move!`);
+                }
+
+                // 5. Reassign services to target subscription
+                let serviceCount = 0;
+                if (sourceSubIds.length > 0) {
+                    // Count services before moving
+                    const { count } = await supabase
+                        .from('sub_subscription_services')
+                        .select('*', { count: 'exact', head: true })
+                        .in('subscription_id', sourceSubIds);
+                    serviceCount = count || 0;
+                    console.log(`[Vendor Merge] Moving ${serviceCount} services`);
+
+                    // Move services
+                    const { error: serviceMoveError } = await supabase
+                        .from('sub_subscription_services')
+                        .update({
+                            subscription_id: targetSubscription.id,
+                            updated_at: new Date().toISOString()
+                        })
+                        .in('subscription_id', sourceSubIds);
+
+                    if (serviceMoveError) {
+                        console.error('[Vendor Merge] Failed to move services:', serviceMoveError);
+                    }
+
+                    // 6. Delete assignments from source subscriptions
+                    const { error: assignmentDeleteError } = await supabase
+                        .from('sub_assignments')
+                        .delete()
+                        .in('subscription_id', sourceSubIds);
+
+                    if (assignmentDeleteError) {
+                        console.error('[Vendor Merge] Failed to delete assignments:', assignmentDeleteError);
+                    }
+
+                    // 7. Delete source subscriptions by their IDs directly (more reliable)
+                    console.log(`[Vendor Merge] Deleting source subscriptions: ${sourceSubIds.join(', ')}`);
+                    const { error: subDeleteError } = await supabase
+                        .from('sub_subscriptions')
+                        .delete()
+                        .in('id', sourceSubIds);
+
+                    if (subDeleteError) {
+                        console.error('[Vendor Merge] Failed to delete source subscriptions:', subDeleteError);
+                        throw new Error(`Failed to delete source subscriptions: ${subDeleteError.message}`);
+                    }
+
+                    // Verify subscriptions deleted
+                    const { count: remainingSubs } = await supabase
+                        .from('sub_subscriptions')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('vendor_id', sourceVendorId);
+
+                    if (remainingSubs && remainingSubs > 0) {
+                        console.error(`[Vendor Merge] ${remainingSubs} subscriptions still on source vendor after delete!`);
+                    }
+                }
+
+                // 8. Delete source vendor
+                console.log(`[Vendor Merge] Deleting source vendor: ${sourceVendorId}`);
+                const { error: vendorDeleteError } = await supabase
+                    .from('sub_vendors')
+                    .delete()
+                    .eq('id', sourceVendorId);
+
+                if (vendorDeleteError) {
+                    console.error('[Vendor Merge] Failed to delete source vendor:', vendorDeleteError);
+                    throw new Error(`Failed to delete source vendor: ${vendorDeleteError.message}`);
+                }
+
+                // Verify vendor deleted
+                const { data: checkVendor } = await supabase
+                    .from('sub_vendors')
+                    .select('id')
+                    .eq('id', sourceVendorId)
+                    .maybeSingle();
+
+                if (checkVendor) {
+                    console.error('[Vendor Merge] Source vendor still exists after delete!');
+                    return {
+                        success: false,
+                        merged: { subscriptions: 0, invoices: 0, services: 0 },
+                        error: 'Source vendor could not be deleted'
+                    };
+                }
+
+                console.log(`[Vendor Merge] Merge completed successfully`);
+                return {
+                    success: true,
+                    merged: {
+                        subscriptions: sourceSubIds.length,
+                        invoices: invoiceCount || 0,
+                        services: serviceCount
+                    }
+                };
+            } catch (error) {
+                console.error('[Vendor Merge] Error:', error);
+                return {
+                    success: false,
+                    merged: { subscriptions: 0, invoices: 0, services: 0 },
+                    error: (error as Error).message
+                };
+            }
         }
     },
 
@@ -402,6 +686,128 @@ export const db = {
             };
         },
 
+        // Batch upsert for large imports - drastically reduces DB round-trips
+        batchUpsert: async (
+            services: Array<{
+                subscriptionId: string;
+                name: string;
+                currentQuantity: number;
+                currentUnitPrice: number;
+                currency: string;
+            }>,
+            invoiceDate: Date
+        ): Promise<Map<string, string>> => {
+            // Returns Map<serviceName, serviceId>
+            if (services.length === 0) return new Map();
+
+            // 1. Get unique subscription IDs
+            const subscriptionIds = [...new Set(services.map(s => s.subscriptionId))];
+
+            // 2. ONE query to fetch ALL existing services for these subscriptions
+            const { data: existingServices, error: fetchError } = await supabase
+                .from('sub_subscription_services')
+                .select('*')
+                .in('subscription_id', subscriptionIds);
+
+            if (fetchError) {
+                console.error('Error batch fetching services:', fetchError);
+                throw fetchError;
+            }
+
+            // 3. Build lookup map: key = subscriptionId|normalizedName
+            const existingMap = new Map<string, any>();
+            for (const svc of existingServices || []) {
+                const key = `${svc.subscription_id}|${normalizeForMatching(svc.name)}`;
+                existingMap.set(key, svc);
+            }
+
+            // 4. Categorize into inserts vs updates, tracking results
+            const toInsert: Array<{
+                subscription_id: string;
+                name: string;
+                current_quantity: number;
+                current_unit_price: number;
+                currency: string;
+                status: string;
+                updated_at: string;
+            }> = [];
+            const toUpdate: Array<{ id: string; data: any }> = [];
+            const resultMap = new Map<string, string>();
+            const invoiceDateStr = invoiceDate.toISOString();
+
+            // Deduplicate services by subscriptionId + normalizedName to avoid duplicate inserts
+            const processedKeys = new Set<string>();
+
+            for (const service of services) {
+                const normalizedName = normalizeForMatching(service.name);
+                const key = `${service.subscriptionId}|${normalizedName}`;
+
+                // Skip if we've already processed this service in this batch
+                if (processedKeys.has(key)) {
+                    // Still need to add to result map with existing ID
+                    const existingId = resultMap.get(service.name);
+                    if (existingId) continue;
+                }
+                processedKeys.add(key);
+
+                const existing = existingMap.get(key);
+
+                if (existing) {
+                    const existingUpdatedAt = new Date(existing.updated_at || 0);
+                    if (invoiceDate >= existingUpdatedAt) {
+                        toUpdate.push({
+                            id: existing.id,
+                            data: {
+                                current_quantity: service.currentQuantity,
+                                current_unit_price: service.currentUnitPrice,
+                                updated_at: invoiceDateStr
+                            }
+                        });
+                    }
+                    resultMap.set(service.name, existing.id);
+                } else {
+                    toInsert.push({
+                        subscription_id: service.subscriptionId,
+                        name: service.name,
+                        current_quantity: service.currentQuantity,
+                        current_unit_price: service.currentUnitPrice,
+                        currency: service.currency,
+                        status: 'Active',
+                        updated_at: invoiceDateStr
+                    });
+                }
+            }
+
+            // 5. Bulk insert new services (1 query)
+            if (toInsert.length > 0) {
+                const { data: inserted, error: insertError } = await supabase
+                    .from('sub_subscription_services')
+                    .insert(toInsert)
+                    .select('id, name');
+
+                if (insertError) {
+                    console.error('Error bulk inserting services:', insertError);
+                    throw insertError;
+                }
+
+                for (const svc of inserted || []) {
+                    resultMap.set(svc.name, svc.id);
+                }
+            }
+
+            // 6. Update existing services
+            // Supabase doesn't support bulk updates, but updates are typically fewer than inserts
+            // and the main gain is from the single fetch + bulk insert
+            for (const item of toUpdate) {
+                await supabase
+                    .from('sub_subscription_services')
+                    .update(item.data)
+                    .eq('id', item.id);
+            }
+
+            return resultMap;
+        },
+
         findById: async (id: string): Promise<SubscriptionService | null> => {
             const { data, error } = await supabase
                 .from('sub_subscription_services')
@@ -517,6 +923,119 @@ export const db = {
             }
 
             return services.length;
+        },
+
+        // Get merge preview - count line items that will be moved
+        getMergePreview: async (sourceServiceId: string): Promise<{
+            lineItems: number;
+            totalAmount: number;
+        }> => {
+            const { data: lineItems, error } = await supabase
+                .from('sub_invoice_line_items')
+                .select('amount')
+                .eq('service_id', sourceServiceId);
+
+            if (error) {
+                console.error('[Service Merge Preview] Error:', error);
+                return { lineItems: 0, totalAmount: 0 };
+            }
+
+            const totalAmount = (lineItems || []).reduce((sum, li) =>
+                sum + (parseFloat(li.amount) || 0), 0);
+
+            return {
+                lineItems: lineItems?.length || 0,
+                totalAmount
+            };
+        },
+
+        // Merge source service into target service (move all line items)
+        merge: async (
+            sourceServiceId: string,
+            targetServiceId: string
+        ): Promise<{ success: boolean; movedLineItems: number; error?: string }> => {
+            try {
+                console.log(`[Service Merge] Starting merge: ${sourceServiceId} -> ${targetServiceId}`);
+
+                // 1. Count line items before moving
+                const { count: lineItemCount } = await supabase
+                    .from('sub_invoice_line_items')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('service_id', sourceServiceId);
+
+                console.log(`[Service Merge] Moving ${lineItemCount || 0} line items`);
+
+                // 2. Move line items from source service to target service
+                if (lineItemCount && lineItemCount > 0) {
+                    const { error: moveError } = await supabase
+                        .from('sub_invoice_line_items')
+                        .update({
+                            service_id: targetServiceId
+                        })
+                        .eq('service_id', sourceServiceId);
+
+                    if (moveError) {
+                        console.error('[Service Merge] Failed to move line items:', moveError);
+                        throw new Error(`Failed to move line items: ${moveError.message}`);
+                    }
+
+                    // Verify line items moved
+                    const { count: remainingItems } = await supabase
+                        .from('sub_invoice_line_items')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('service_id', sourceServiceId);
+
+                    if (remainingItems && remainingItems > 0) {
+                        console.error(`[Service Merge] ${remainingItems} line items still on source service after move!`);
+                        return {
+                            success: false,
+                            movedLineItems: 0,
+                            error: 'Some line items could not be moved'
+                        };
+                    }
+                }
+
+                // 3. Delete source service (now empty)
+                console.log(`[Service Merge] Deleting source service: ${sourceServiceId}`);
+                const { error: deleteError } = await supabase
+                    .from('sub_subscription_services')
+                    .delete()
+                    .eq('id', sourceServiceId);
+
+                if (deleteError) {
+                    console.error('[Service Merge] Failed to delete source service:', deleteError);
+                    throw new Error(`Failed to delete source service: ${deleteError.message}`);
+                }
+
+                // Verify service deleted
+                const { data: checkService } = await supabase
+                    .from('sub_subscription_services')
+                    .select('id')
+                    .eq('id', sourceServiceId)
+                    .maybeSingle();
+
+                if (checkService) {
+                    console.error('[Service Merge] Source service still exists after delete!');
+                    return {
+                        success: false,
+                        movedLineItems: 0,
+                        error: 'Source service could not be deleted'
+                    };
+                }
+
+                console.log(`[Service Merge] Merge completed successfully`);
+                return {
+                    success: true,
+                    movedLineItems: lineItemCount || 0
+                };
+            } catch (error) {
+                console.error('[Service Merge] Error:', error);
+                return {
+                    success: false,
+                    movedLineItems: 0,
+                    error: (error as Error).message
+                };
+            }
         }
     },
 
@@ -599,6 +1118,74 @@ export const db = {
                 status: data.status,
                 fileUrl: data.file_url
             };
+        },
+
+        // Batch find invoices by invoice numbers (for large imports)
+        findByNumbers: async (invoiceNumbers: string[]): Promise<Map<string, Invoice>> => {
+            if (invoiceNumbers.length === 0) return new Map();
+
+            const { data, error } = await supabase
+                .from('sub_invoices')
+                .select('*')
+                .in('invoice_number', invoiceNumbers);
+
+            if (error) {
+                console.error('Error batch finding invoices:', error);
+                return new Map();
+            }
+
+            const result = new Map<string, Invoice>();
+            for (const row of data || []) {
+                result.set(row.invoice_number, {
+                    id: row.id,
+                    vendorId: row.vendor_id,
+                    subscriptionId: row.subscription_id,
+                    invoiceNumber: row.invoice_number,
+                    invoiceDate: row.invoice_date,
+                    dueDate: row.due_date,
+                    totalAmount: row.total_amount,
+                    currency: row.currency,
+                    status: row.status,
+                    fileUrl: row.file_url
+                });
+            }
+            return result;
+        },
+
+        // Batch get line items for multiple invoices (for large imports)
+        getLineItemsByInvoiceIds: async (invoiceIds: string[]): Promise<Map<string, InvoiceLineItem[]>> => {
+            if (invoiceIds.length === 0) return new Map();
+
+            const { data, error } = await supabase
+                .from('sub_invoice_line_items')
+                .select('*')
+                .in('invoice_id', invoiceIds);
+
+            if (error) {
+                console.error('Error batch getting line items:', error);
+                return new Map();
+            }
+
+            const result = new Map<string, InvoiceLineItem[]>();
+            for (const row of data || []) {
+                const item: InvoiceLineItem = {
+                    id: row.id,
+                    invoiceId: row.invoice_id,
+                    serviceId: row.service_id,
+                    description: row.description,
+                    quantity: row.quantity,
+                    unitPrice: row.unit_price,
+                    totalAmount: row.total_amount,
+                    periodStart: row.period_start,
+                    periodEnd: row.period_end,
+                    billingMonthOverride: row.billing_month_override
+                };
+                if (!result.has(row.invoice_id)) {
+                    result.set(row.invoice_id, []);
+                }
+                result.get(row.invoice_id)!.push(item);
+            }
+            return result;
         },
 
         // Delete line items for an invoice (for re-processing)
@@ -962,6 +1549,53 @@ export const db = {
                 },
                 status: data.status as SubscriptionStatus,
             };
+        },
+
+        // Batch find subscriptions by vendor IDs (for large imports)
+        findByVendorIds: async (vendorIds: string[]): Promise<Map<string, Subscription>> => {
+            if (vendorIds.length === 0) return new Map();
+
+            const { data, error } = await supabase
+                .from('sub_subscriptions')
+                .select('*')
+                .in('vendor_id', vendorIds)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error('Error batch finding subscriptions:', error);
+                return new Map();
+            }
+
+            // Return map keyed by vendor_id (first/latest subscription per vendor)
+            const result = new Map<string, Subscription>();
+            for (const row of data || []) {
+                // Only keep first (latest due to order) subscription per vendor
+                if (!result.has(row.vendor_id)) {
+                    result.set(row.vendor_id, {
+                        id: row.id,
+                        vendorId: row.vendor_id,
+                        name: row.name,
+                        category: row.category,
+                        logo: row.logo,
+                        renewalDate: row.renewal_date,
+                        cost: row.cost,
+                        billingCycle: row.billing_cycle as BillingCycle,
+                        paymentMethod: row.payment_method as PaymentMethod,
+                        paymentDetails: row.payment_details,
+                        autoRenewal: row.auto_renewal,
+                        owner: {
+                            name: row.owner_name || 'Unknown',
+                            email: row.owner_email || '',
+                        },
+                        seats: {
+                            total: row.seats_total,
+                            used: row.seats_used,
+                        },
+                        status: row.status as SubscriptionStatus,
+                    });
+                }
+            }
+            return result;
         },
 
         create: async (sub: Partial<Subscription>): Promise<Subscription | null> => {

@@ -367,6 +367,17 @@ function ShadowItContent() {
     };
 
     const handleExecuteImport = async (decisions: ImportDecision[], globalStrategy: MergeStrategy) => {
+        // If called with empty decisions, the batch processing was done in ImportPreviewModal
+        // Just handle the cleanup
+        if (decisions.length === 0) {
+            setShowImportPreview(false);
+            setInvoiceAnalysis(null);
+            setInvoiceCsvData([]);
+            router.refresh();
+            return;
+        }
+
+        // Fallback for legacy single-request import (shouldn't be used anymore)
         try {
             const response = await fetch('/api/import/execute', {
                 method: 'POST',

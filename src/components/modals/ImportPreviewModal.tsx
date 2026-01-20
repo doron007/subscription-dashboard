@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
     X, AlertTriangle, CheckCircle2, Plus, RefreshCw, Minus, FileText,
     ChevronDown, ChevronRight, Loader2, AlertCircle, Check
 } from 'lucide-react';
-import type { ImportAnalysis, InvoiceDiff, LineItemDiff, MergeStrategy, ImportDecision, ImportAction, LineItemAction, VoidedAction } from '@/lib/import/types';
+import type { ImportAnalysis, InvoiceDiff, LineItemDiff, MergeStrategy, ImportDecision, ImportAction, LineItemAction, VoidedAction, ImportExecutionResult } from '@/lib/import/types';
 
 interface ImportPreviewModalProps {
     isOpen: boolean;
@@ -14,6 +14,9 @@ interface ImportPreviewModalProps {
     csvData: any[];
     onExecute: (decisions: ImportDecision[], globalStrategy: MergeStrategy) => Promise<void>;
 }
+
+// Batch processing configuration
+const BATCH_SIZE = 50; // Process 50 invoices per batch to stay well under timeout
 
 // Badge component for diff types
 function DiffBadge({ type }: { type: string }) {
@@ -247,6 +250,16 @@ export function ImportPreviewModal({
     // Track voided action per invoice (default: import_unpaid)
     const [voidedActions, setVoidedActions] = useState<Record<string, VoidedAction>>({});
 
+    // Batch processing progress state
+    const [importProgress, setImportProgress] = useState({
+        currentBatch: 0,
+        totalBatches: 0,
+        processedItems: 0,
+        totalItems: 0,
+        results: null as ImportExecutionResult | null,
+        errors: [] as string[]
+    });
+
     // Initialize selections when analysis changes
     useMemo(() => {
         if (!analysis) return;
@@ -361,35 +374,134 @@ export function ImportPreviewModal({
         }
     };
 
-    // Build decisions and execute import
+    // Build decisions and execute import with batching
     const handleExecute = async () => {
         if (!analysis) return;
 
         setIsExecuting(true);
+
+        // Build decisions based on selections
+        const decisions: ImportDecision[] = analysis.invoiceDiffs.map(invoice => {
+            const lineItemDecisions = invoice.lineItemDiffs.map(item => ({
+                lineItemKey: item.lineItemKey,
+                action: (selectedLineItems.has(item.lineItemKey) ? 'import' : 'skip') as LineItemAction,
+                mergeStrategy: globalStrategy
+            }));
+
+            const hasSelectedItems = invoice.lineItemDiffs.some(
+                item => selectedLineItems.has(item.lineItemKey)
+            );
+
+            return {
+                invoiceNumber: invoice.invoiceNumber,
+                action: (hasSelectedItems ? 'import' : 'skip') as ImportAction,
+                mergeStrategy: globalStrategy,
+                lineItemDecisions
+            };
+        });
+
+        // Calculate total batches based on CSV data
+        const totalItems = csvData.length;
+        const totalBatches = Math.ceil(totalItems / BATCH_SIZE);
+
+        // Reset progress
+        setImportProgress({
+            currentBatch: 0,
+            totalBatches,
+            processedItems: 0,
+            totalItems,
+            results: null,
+            errors: []
+        });
+
+        // Aggregate results across batches
+        const aggregatedResults: ImportExecutionResult = {
+            success: true,
+            created: { vendors: 0, invoices: 0, lineItems: 0, services: 0 },
+            updated: { invoices: 0, lineItems: 0 },
+            skipped: { invoices: 0, lineItems: 0 },
+            errors: []
+        };
+
         try {
-            // Build decisions based on selections
-            const decisions: ImportDecision[] = analysis.invoiceDiffs.map(invoice => {
-                const lineItemDecisions = invoice.lineItemDiffs.map(item => ({
-                    lineItemKey: item.lineItemKey,
-                    action: (selectedLineItems.has(item.lineItemKey) ? 'import' : 'skip') as LineItemAction,
-                    mergeStrategy: globalStrategy
+            // Process each batch sequentially
+            for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentBatch: batchIndex + 1
                 }));
 
-                const hasSelectedItems = invoice.lineItemDiffs.some(
-                    item => selectedLineItems.has(item.lineItemKey)
-                );
+                const response = await fetch('/api/import/execute-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        csvData,
+                        decisions,
+                        globalStrategy,
+                        batchIndex,
+                        batchSize: BATCH_SIZE,
+                        totalBatches
+                    })
+                });
 
-                return {
-                    invoiceNumber: invoice.invoiceNumber,
-                    action: (hasSelectedItems ? 'import' : 'skip') as ImportAction,
-                    mergeStrategy: globalStrategy,
-                    lineItemDecisions
-                };
-            });
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.details || error.error || `Batch ${batchIndex + 1} failed`);
+                }
 
-            await onExecute(decisions, globalStrategy);
+                const batchResult = await response.json();
+
+                // Aggregate results
+                aggregatedResults.created.vendors += batchResult.created.vendors;
+                aggregatedResults.created.invoices += batchResult.created.invoices;
+                aggregatedResults.created.lineItems += batchResult.created.lineItems;
+                aggregatedResults.created.services += batchResult.created.services;
+                aggregatedResults.updated.invoices += batchResult.updated.invoices;
+                aggregatedResults.updated.lineItems += batchResult.updated.lineItems;
+                aggregatedResults.skipped.invoices += batchResult.skipped.invoices;
+                aggregatedResults.skipped.lineItems += batchResult.skipped.lineItems;
+                aggregatedResults.errors.push(...(batchResult.errors || []));
+
+                // Update progress
+                const processedItems = Math.min((batchIndex + 1) * BATCH_SIZE, totalItems);
+                setImportProgress(prev => ({
+                    ...prev,
+                    processedItems,
+                    results: { ...aggregatedResults },
+                    errors: aggregatedResults.errors
+                }));
+            }
+
+            aggregatedResults.success = aggregatedResults.errors.length === 0;
+
+            // Show completion message
+            const message = [
+                `Import completed!`,
+                `Created: ${aggregatedResults.created.invoices} invoices, ${aggregatedResults.created.lineItems} line items`,
+                `Updated: ${aggregatedResults.updated.invoices} invoices`,
+                `Skipped: ${aggregatedResults.skipped.invoices} invoices`,
+                aggregatedResults.errors.length > 0 ? `Errors: ${aggregatedResults.errors.length}` : ''
+            ].filter(Boolean).join('\n');
+
+            alert(message);
+
+            // Call original onExecute to handle cleanup (close modal, refresh, etc.)
+            // Pass empty decisions since we already processed
+            await onExecute([], globalStrategy);
+
+        } catch (error) {
+            console.error('Batch import error:', error);
+            alert(`Import failed: ${(error as Error).message}`);
         } finally {
             setIsExecuting(false);
+            setImportProgress({
+                currentBatch: 0,
+                totalBatches: 0,
+                processedItems: 0,
+                totalItems: 0,
+                results: null,
+                errors: []
+            });
         }
     };
 
@@ -559,35 +671,68 @@ export function ImportPreviewModal({
                     </div>
 
                     {/* Footer */}
-                    <div className="flex items-center justify-between p-4 border-t border-slate-200 bg-slate-50">
-                        <div className="text-sm text-slate-500">
-                            {selectedCount} items selected for import
-                        </div>
-
-                        <div className="flex gap-3">
-                            <button
-                                onClick={onClose}
-                                className="px-4 py-2 text-slate-700 font-medium hover:bg-slate-200 rounded-lg transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleExecute}
-                                disabled={selectedCount === 0 || isExecuting}
-                                className="px-4 py-2 bg-violet-600 text-white font-medium rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                            >
-                                {isExecuting ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                        Importing...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Check className="w-4 h-4" />
-                                        Import Selected ({selectedCount})
-                                    </>
+                    <div className="flex flex-col border-t border-slate-200 bg-slate-50">
+                        {/* Progress bar during import */}
+                        {isExecuting && importProgress.totalBatches > 0 && (
+                            <div className="p-4 border-b border-slate-200 bg-violet-50">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-sm font-medium text-violet-800">
+                                        Importing batch {importProgress.currentBatch} of {importProgress.totalBatches}
+                                    </span>
+                                    <span className="text-sm text-violet-600">
+                                        {Math.round((importProgress.processedItems / importProgress.totalItems) * 100)}%
+                                    </span>
+                                </div>
+                                <div className="w-full bg-violet-200 rounded-full h-2.5">
+                                    <div
+                                        className="bg-violet-600 h-2.5 rounded-full transition-all duration-300"
+                                        style={{ width: `${(importProgress.processedItems / importProgress.totalItems) * 100}%` }}
+                                    />
+                                </div>
+                                {importProgress.results && (
+                                    <div className="mt-2 text-xs text-violet-700">
+                                        Created: {importProgress.results.created.invoices} invoices, {importProgress.results.created.lineItems} line items
+                                        {importProgress.errors.length > 0 && (
+                                            <span className="text-red-600 ml-2">
+                                                ({importProgress.errors.length} errors)
+                                            </span>
+                                        )}
+                                    </div>
                                 )}
-                            </button>
+                            </div>
+                        )}
+
+                        <div className="flex items-center justify-between p-4">
+                            <div className="text-sm text-slate-500">
+                                {selectedCount} items selected for import
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={onClose}
+                                    disabled={isExecuting}
+                                    className="px-4 py-2 text-slate-700 font-medium hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleExecute}
+                                    disabled={selectedCount === 0 || isExecuting}
+                                    className="px-4 py-2 bg-violet-600 text-white font-medium rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                >
+                                    {isExecuting ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Importing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Check className="w-4 h-4" />
+                                            Import Selected ({selectedCount})
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

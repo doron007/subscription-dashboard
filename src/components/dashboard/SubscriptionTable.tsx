@@ -1,11 +1,13 @@
 import type { Subscription } from '@/types';
 import { formatCurrency, formatDate, cn } from '@/lib/utils';
 import { UtilizationBar } from './UtilizationBar';
-import { MoreHorizontal, AlertCircle, Search, ArrowUp, ArrowDown } from 'lucide-react';
-import { useState, useMemo, useCallback } from 'react';
+import { MoreHorizontal, AlertCircle, Search, ArrowUp, ArrowDown, Eye, GitMerge } from 'lucide-react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 import { VendorLogo } from '@/components/common/VendorLogo';
+import { VendorMergeModal } from '@/components/modals/VendorMergeModal';
 
 type SortColumn = 'name' | 'vendor' | 'status' | 'cost' | 'renewal' | 'utilization' | 'owner' | null;
 type SortDirection = 'asc' | 'desc' | null;
@@ -15,12 +17,43 @@ interface SubscriptionTableProps {
     enableSearch?: boolean;
     limit?: number;
     title?: string;
+    onRefresh?: () => void;
 }
 
-export function SubscriptionTable({ subscriptions, enableSearch = false, limit, title = "Active Subscriptions" }: SubscriptionTableProps) {
+export function SubscriptionTable({ subscriptions, enableSearch = false, limit, title = "Active Subscriptions", onRefresh }: SubscriptionTableProps) {
+    const router = useRouter();
     const [searchTerm, setSearchTerm] = useState('');
     const [sortColumn, setSortColumn] = useState<SortColumn>(null);
     const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+    const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Merge modal state
+    const [mergeModalOpen, setMergeModalOpen] = useState(false);
+    const [mergeSourceVendor, setMergeSourceVendor] = useState<{ id: string; name: string } | null>(null);
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setOpenDropdownId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleMergeClick = (vendorId: string, vendorName: string) => {
+        setMergeSourceVendor({ id: vendorId, name: vendorName });
+        setMergeModalOpen(true);
+        setOpenDropdownId(null);
+    };
+
+    const handleMergeComplete = () => {
+        if (onRefresh) {
+            onRefresh();
+        }
+    };
 
     // Cycle through sort states: none -> asc -> desc -> none
     const handleSort = useCallback((column: SortColumn) => {
@@ -280,10 +313,43 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                                         <span className="text-slate-600 truncate max-w-[100px]">{sub.owner.name}</span>
                                     </div>
                                 </td>
-                                <td className="px-6 py-4 text-right">
-                                    <button className="text-slate-400 hover:text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <MoreHorizontal className="w-5 h-5" />
-                                    </button>
+                                <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                                    <div className="relative" ref={openDropdownId === sub.id ? dropdownRef : undefined}>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setOpenDropdownId(openDropdownId === sub.id ? null : sub.id);
+                                            }}
+                                            className="text-slate-400 hover:text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-100"
+                                        >
+                                            <MoreHorizontal className="w-5 h-5" />
+                                        </button>
+
+                                        {openDropdownId === sub.id && (
+                                            <div className="absolute right-0 bottom-full mb-1 w-48 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1">
+                                                <button
+                                                    onClick={() => {
+                                                        router.push(`/subscriptions/${sub.id}`);
+                                                        setOpenDropdownId(null);
+                                                    }}
+                                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 text-left"
+                                                >
+                                                    <Eye className="w-4 h-4" />
+                                                    View Details
+                                                </button>
+                                                <div className="border-t border-slate-100 my-1" />
+                                                {sub.vendorId && (
+                                                    <button
+                                                        onClick={() => handleMergeClick(sub.vendorId!, (sub as any).vendorName || sub.name)}
+                                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 text-left"
+                                                    >
+                                                        <GitMerge className="w-4 h-4" />
+                                                        Merge Vendor...
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                 </td>
                             </tr>
                         ))}
@@ -297,6 +363,17 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                     No subscriptions found.
                 </div>
             )}
+
+            {/* Vendor Merge Modal */}
+            <VendorMergeModal
+                isOpen={mergeModalOpen}
+                onClose={() => {
+                    setMergeModalOpen(false);
+                    setMergeSourceVendor(null);
+                }}
+                sourceVendor={mergeSourceVendor}
+                onMergeComplete={handleMergeComplete}
+            />
         </div>
     );
 }

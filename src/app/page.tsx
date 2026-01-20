@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { Subscription, Invoice, Vendor } from '@/types';
@@ -44,27 +44,28 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [invoiceFilter, setInvoiceFilter] = useState<'all' | 'pending'>('all');
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [subsData, vendorsData, invoicesData, lineItemsData] = await Promise.all([
-          subscriptionService.getAll(),
-          subscriptionService.getVendors().catch(() => []),
-          subscriptionService.getInvoices().catch(() => []),
-          subscriptionService.getAllLineItems().catch(() => [])
-        ]);
-        setSubscriptions(subsData);
-        setVendors(vendorsData);
-        setInvoices(invoicesData);
-        setLineItems(lineItemsData);
-      } catch (err) {
-        console.error("Failed to load dashboard data", err);
-      } finally {
-        setLoading(false);
-      }
+  const loadData = useCallback(async () => {
+    try {
+      const [subsData, vendorsData, invoicesData, lineItemsData] = await Promise.all([
+        subscriptionService.getAll(),
+        subscriptionService.getVendors().catch(() => []),
+        subscriptionService.getInvoices().catch(() => []),
+        subscriptionService.getAllLineItems().catch(() => [])
+      ]);
+      setSubscriptions(subsData);
+      setVendors(vendorsData);
+      setInvoices(invoicesData);
+      setLineItems(lineItemsData);
+    } catch (err) {
+      console.error("Failed to load dashboard data", err);
+    } finally {
+      setLoading(false);
     }
-    loadData();
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // Calculate summary metrics
   const now = new Date();
@@ -358,7 +359,7 @@ export default function Dashboard() {
         <DashboardCharts subscriptions={subscriptions} invoices={invoices} lineItems={lineItems} />
 
         {/* Main Content */}
-        <SubscriptionTable subscriptions={subscriptions} limit={5} enableSearch={true} />
+        <SubscriptionTable subscriptions={subscriptions} limit={5} enableSearch={true} onRefresh={loadData} />
 
       </div>
     </DashboardLayout>

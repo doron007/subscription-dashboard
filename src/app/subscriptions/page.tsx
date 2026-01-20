@@ -1,30 +1,30 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { Subscription } from '@/types';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { SubscriptionTable } from '@/components/dashboard/SubscriptionTable';
 import { ActionsBar } from '@/components/dashboard/ActionsBar';
-import { Search } from 'lucide-react';
 
 export default function SubscriptionsPage() {
     const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        async function loadData() {
-            try {
-                const data = await subscriptionService.getAll();
-                setSubscriptions(data);
-            } catch (err) {
-                console.error("Failed to load subscriptions", err);
-            } finally {
-                setLoading(false);
-            }
+    const loadData = useCallback(async () => {
+        try {
+            const data = await subscriptionService.getAll();
+            setSubscriptions(data);
+        } catch (err) {
+            console.error("Failed to load subscriptions", err);
+        } finally {
+            setLoading(false);
         }
-        loadData();
     }, []);
+
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
 
     if (loading) return <DashboardLayout>Loading...</DashboardLayout>;
 
@@ -39,7 +39,7 @@ export default function SubscriptionsPage() {
                     <ActionsBar />
                 </div>
 
-                <SubscriptionTable subscriptions={subscriptions} enableSearch={true} title="Subscriptions Directory" />
+                <SubscriptionTable subscriptions={subscriptions} enableSearch={true} title="Subscriptions Directory" onRefresh={loadData} />
             </div>
         </DashboardLayout>
     );

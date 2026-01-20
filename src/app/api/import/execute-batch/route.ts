@@ -42,10 +42,19 @@ function parseServiceMonth(serviceMonth: string, referenceYear: number): string 
     return `${referenceYear}-${month}-01`;
 }
 
+interface BatchRequest {
+    csvData: any[];
+    decisions: ImportDecision[];
+    globalStrategy: MergeStrategy;
+    batchIndex: number;
+    batchSize: number;
+    totalBatches: number;
+}
+
 /**
- * POST /api/import/execute
- * Executes the import of CSV data based on user decisions from the analyze step.
- * Creates/updates vendors, subscriptions, invoices, and line items.
+ * POST /api/import/execute-batch
+ * Executes a single batch of CSV data import.
+ * This endpoint is designed to be called multiple times for large imports.
  */
 export async function POST(request: Request) {
     const { response } = await requireAuth();
@@ -53,11 +62,7 @@ export async function POST(request: Request) {
 
     try {
         const body = await request.json();
-        const { csvData, decisions, globalStrategy = 'csv_wins' } = body as {
-            csvData: any[];
-            decisions: ImportDecision[];
-            globalStrategy: MergeStrategy;
-        };
+        const { csvData, decisions, globalStrategy = 'csv_wins', batchIndex, batchSize, totalBatches } = body as BatchRequest;
 
         if (!csvData || !Array.isArray(csvData)) {
             return NextResponse.json(
@@ -118,6 +123,11 @@ export async function POST(request: Request) {
             invoices = Array.from(invoiceMap.values());
         }
 
+        // Calculate batch slice
+        const startIdx = batchIndex * batchSize;
+        const endIdx = Math.min(startIdx + batchSize, invoices.length);
+        const batchInvoices = invoices.slice(startIdx, endIdx);
+
         // Build decision map for quick lookup
         const decisionMap = new Map<string, ImportDecision>();
         for (const decision of decisions || []) {
@@ -125,27 +135,32 @@ export async function POST(request: Request) {
         }
 
         // Results tracking
-        const result: ImportExecutionResult = {
+        const result: ImportExecutionResult & { batchIndex: number; totalBatches: number; processedInBatch: number } = {
             success: true,
             created: { vendors: 0, invoices: 0, lineItems: 0, services: 0 },
             updated: { invoices: 0, lineItems: 0 },
             skipped: { invoices: 0, lineItems: 0 },
-            errors: []
+            errors: [],
+            batchIndex,
+            totalBatches,
+            processedInBatch: batchInvoices.length
         };
 
         // Pre-fetch data in batch for efficiency
-        const vendorNames = [...new Set(invoices.map(inv => inv.vendor))];
-        const invoiceNumbers = invoices.map(inv => inv.invoiceNumber);
+        const vendorNames = [...new Set(batchInvoices.map(inv => inv.vendor))];
+        const invoiceNumbers = batchInvoices.map(inv => inv.invoiceNumber);
 
-        // Batch lookup vendors and invoices
+        // Batch lookup vendors
         const existingVendorsMap = await db.vendors.findByNames(vendorNames);
+
+        // Batch lookup invoices
         const existingInvoicesMap = await db.invoices.findByNumbers(invoiceNumbers);
 
-        // Cache for created/found vendors
+        // Cache for created/found vendors and subscriptions during this batch
         const vendorCache = new Map<string, any>();
 
         // ===== PHASE 1: Ensure all vendors exist =====
-        for (const parsedInvoice of invoices) {
+        for (const parsedInvoice of batchInvoices) {
             const vendorKey = parsedInvoice.vendor.toLowerCase();
             if (!vendorCache.has(vendorKey)) {
                 let vendor = existingVendorsMap.get(vendorKey);
@@ -187,6 +202,7 @@ export async function POST(request: Request) {
         }
 
         // ===== PHASE 3: Process invoices and collect all service data =====
+        // Collect all services across the entire batch for a single batch upsert
         const allServicesToUpsert: Array<{
             subscriptionId: string;
             name: string;
@@ -195,6 +211,7 @@ export async function POST(request: Request) {
             currency: string;
         }> = [];
 
+        // Track invoice-to-lineItems mapping for later processing
         const invoiceLineItemsMap = new Map<string, {
             invoice: any;
             lineItems: any[];
@@ -202,13 +219,15 @@ export async function POST(request: Request) {
             invoiceDate: Date;
         }>();
 
+        // Use the most recent invoice date for the batch service upsert
         let latestInvoiceDate = new Date(0);
 
-        for (const parsedInvoice of invoices) {
+        for (const parsedInvoice of batchInvoices) {
             try {
                 const decision = decisionMap.get(parsedInvoice.invoiceNumber);
 
                 // Skip if explicitly marked to skip
+                // For voided/pending invoices, check if user chose to import them
                 const shouldSkipVoided = parsedInvoice.isVoided && decision?.action !== 'import';
                 if (decision?.action === 'skip' || shouldSkipVoided) {
                     result.skipped.invoices++;
@@ -216,6 +235,7 @@ export async function POST(request: Request) {
                     continue;
                 }
 
+                // Determine merge strategy for this invoice
                 const mergeStrategy = decision?.mergeStrategy || globalStrategy;
 
                 // Get vendor and subscription from caches
@@ -227,7 +247,7 @@ export async function POST(request: Request) {
                     throw new Error(`Failed to get subscription for vendor ${vendor.name}`);
                 }
 
-                // Check for existing invoice
+                // Check for existing invoice (use batch lookup result)
                 let invoice = existingInvoicesMap.get(parsedInvoice.invoiceNumber) || null;
                 const invoiceDate = parsedInvoice.invoiceDate
                     ? new Date(parsedInvoice.invoiceDate)
@@ -237,9 +257,11 @@ export async function POST(request: Request) {
                     latestInvoiceDate = invoiceDate;
                 }
 
+                // Track if this is an update scenario (invoice existed and we're doing csv_wins)
                 const isUpdatingExisting = invoice && mergeStrategy === 'csv_wins';
 
                 if (invoice) {
+                    // Invoice exists - handle based on action/strategy
                     const shouldSkip = decision?.action === ('skip' as ImportAction) || mergeStrategy === 'keep_existing';
                     if (shouldSkip) {
                         result.skipped.invoices++;
@@ -247,6 +269,7 @@ export async function POST(request: Request) {
                         continue;
                     }
 
+                    // Update invoice
                     if (mergeStrategy === 'csv_wins') {
                         await db.invoices.update(invoice.id, {
                             invoiceDate: parsedInvoice.invoiceDate,
@@ -254,9 +277,12 @@ export async function POST(request: Request) {
                             status: parsedInvoice.paidDate ? 'Paid' : 'Pending'
                         });
                         result.updated.invoices++;
+
+                        // Delete existing line items for clean re-import
                         await db.invoices.deleteLineItems(invoice.id);
                     }
                 } else {
+                    // Create new invoice
                     invoice = await db.invoices.create({
                         vendorId: vendor.id,
                         subscriptionId: subscription.id,
@@ -269,6 +295,7 @@ export async function POST(request: Request) {
                     result.created.invoices++;
                 }
 
+                // Build line item decision map
                 const lineItemDecisionMap = new Map<string, { action: string; mergeStrategy: MergeStrategy }>();
                 for (const liDecision of decision?.lineItemDecisions || []) {
                     lineItemDecisionMap.set(liDecision.lineItemKey, {
@@ -277,23 +304,30 @@ export async function POST(request: Request) {
                     });
                 }
 
+                // Aggregate services by name for this invoice
                 const serviceAggregates = new Map<string, {
                     totalAmount: number;
                     quantity: number;
                 }>();
 
+                // First pass: aggregate and filter line items
                 const lineItemsToCreate: any[] = [];
 
                 for (const item of parsedInvoice.lineItems) {
                     const liDecision = lineItemDecisionMap.get(item.lineItemKey);
 
+                    // For existing invoices being updated (csv_wins), include ALL items from CSV
+                    // since we deleted existing line items and need to re-create them all.
+                    // For new invoices, respect user selections.
                     if (!isUpdatingExisting && liDecision?.action === 'skip') {
                         result.skipped.lineItems++;
                         continue;
                     }
 
+                    // Extract clean service name from description (strips date suffixes)
                     const serviceName = extractCleanServiceName(item.description);
 
+                    // Aggregate for service creation
                     if (serviceAggregates.has(serviceName)) {
                         const existing = serviceAggregates.get(serviceName)!;
                         existing.totalAmount += item.totalPrice;
@@ -305,7 +339,10 @@ export async function POST(request: Request) {
                         });
                     }
 
+                    // Extract period from description
                     const period = extractPeriodFromDescription(item.description);
+
+                    // Parse service month from CSV for billing_month_override
                     const invoiceYear = invoiceDate.getFullYear();
                     const billingMonthOverride = item.serviceMonth
                         ? parseServiceMonth(item.serviceMonth, invoiceYear)
@@ -320,7 +357,7 @@ export async function POST(request: Request) {
                         periodStart: period?.periodStart,
                         periodEnd: period?.periodEnd,
                         billingMonthOverride,
-                        serviceName
+                        serviceName // For linking later
                     });
                 }
 
@@ -329,12 +366,13 @@ export async function POST(request: Request) {
                     allServicesToUpsert.push({
                         subscriptionId: subscription.id,
                         name: serviceName,
-                        currentQuantity: 1,
+                        currentQuantity: 1, // Aggregated
                         currentUnitPrice: aggregate.totalAmount,
                         currency: 'USD'
                     });
                 }
 
+                // Store for later line item creation
                 invoiceLineItemsMap.set(parsedInvoice.invoiceNumber, {
                     invoice,
                     lineItems: lineItemsToCreate,
@@ -358,7 +396,7 @@ export async function POST(request: Request) {
         }
 
         // ===== PHASE 5: Create all line items with service IDs =====
-        for (const [, data] of invoiceLineItemsMap) {
+        for (const [_invoiceNumber, data] of invoiceLineItemsMap) {
             const dbLineItems = data.lineItems.map(item => ({
                 invoiceId: item.invoiceId,
                 serviceId: serviceIdMap.get(item.serviceName),
@@ -380,9 +418,10 @@ export async function POST(request: Request) {
         result.success = result.errors.length === 0;
 
         return NextResponse.json(result);
-    } catch {
+    } catch (error) {
+        console.error('Batch import error:', error);
         return NextResponse.json(
-            { error: 'Import failed' },
+            { error: 'Batch import failed', details: (error as Error).message },
             { status: 500 }
         );
     }

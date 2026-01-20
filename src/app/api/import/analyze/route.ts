@@ -391,31 +391,37 @@ export async function POST(request: Request) {
             };
         }
 
-        // Analyze vendors
-        const vendorAnalysis = await Promise.all(
-            vendors.map(async (vendorName) => {
-                const existing = await db.vendors.findByName(vendorName);
-                return {
-                    name: vendorName,
-                    isNew: !existing,
-                    invoiceCount: invoices.filter(inv => inv.vendor === vendorName).length
-                };
-            })
-        );
+        // Batch lookup vendors for efficiency with large imports
+        const existingVendorsMap = await db.vendors.findByNames(vendors);
+        const vendorAnalysis = vendors.map((vendorName) => {
+            const existing = existingVendorsMap.get(vendorName.toLowerCase());
+            return {
+                name: vendorName,
+                isNew: !existing,
+                invoiceCount: invoices.filter(inv => inv.vendor === vendorName).length
+            };
+        });
 
-        // Analyze each invoice
+        // Batch lookup invoices for efficiency
+        const invoiceNumbers = invoices.map(inv => inv.invoiceNumber);
+        const existingInvoicesMap = await db.invoices.findByNumbers(invoiceNumbers);
+
+        // Batch lookup line items for existing invoices
+        const existingInvoiceIds = Array.from(existingInvoicesMap.values()).map(inv => inv.id);
+        const existingLineItemsMap = await db.invoices.getLineItemsByInvoiceIds(existingInvoiceIds);
+
+        // Analyze each invoice (now using cached data, no more DB calls in loop)
         const invoiceDiffs: InvoiceDiff[] = [];
         const warnings: string[] = [];
 
         for (const parsedInvoice of invoices) {
-            // Look up existing invoice
-            const existingInvoice = await db.invoices.findByNumber(parsedInvoice.invoiceNumber);
+            // Look up existing invoice from batch result
+            const existingInvoice = existingInvoicesMap.get(parsedInvoice.invoiceNumber) || null;
 
-            // Get existing line items if invoice exists
-            let existingLineItems: any[] = [];
-            if (existingInvoice) {
-                existingLineItems = await db.invoices.getLineItems(existingInvoice.id);
-            }
+            // Get existing line items from batch result
+            const existingLineItems = existingInvoice
+                ? existingLineItemsMap.get(existingInvoice.id) || []
+                : [];
 
             const diff = await analyzeInvoice(parsedInvoice, existingInvoice, existingLineItems);
             invoiceDiffs.push(diff);
