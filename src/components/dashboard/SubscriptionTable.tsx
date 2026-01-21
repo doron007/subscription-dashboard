@@ -1,13 +1,15 @@
 import type { Subscription } from '@/types';
 import { formatCurrency, formatDate, cn } from '@/lib/utils';
 import { UtilizationBar } from './UtilizationBar';
-import { MoreHorizontal, AlertCircle, Search, ArrowUp, ArrowDown, Eye, GitMerge } from 'lucide-react';
+import { MoreHorizontal, AlertCircle, Search, ArrowUp, ArrowDown, Eye, GitMerge, ChevronDown, Trash2, Download, Loader2 } from 'lucide-react';
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import Papa from 'papaparse';
 
 import { VendorLogo } from '@/components/common/VendorLogo';
 import { VendorMergeModal } from '@/components/modals/VendorMergeModal';
+import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
+import { subscriptionService } from '@/services/subscriptionService';
 
 type SortColumn = 'name' | 'vendor' | 'status' | 'cost' | 'renewal' | 'utilization' | 'owner' | null;
 type SortDirection = 'asc' | 'desc' | null;
@@ -21,27 +23,45 @@ interface SubscriptionTableProps {
 }
 
 export function SubscriptionTable({ subscriptions, enableSearch = false, limit, title = "Active Subscriptions", onRefresh }: SubscriptionTableProps) {
-    const router = useRouter();
     const [searchTerm, setSearchTerm] = useState('');
     const [sortColumn, setSortColumn] = useState<SortColumn>(null);
     const [sortDirection, setSortDirection] = useState<SortDirection>(null);
     const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
+    // Selection state for bulk actions
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [bulkActionOpen, setBulkActionOpen] = useState(false);
+    const bulkActionRef = useRef<HTMLDivElement>(null);
+
+    // Bulk delete modal state
+    const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
+    const [bulkDeleteType, setBulkDeleteType] = useState<'subscription' | 'vendor'>('subscription');
+    const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+    const [bulkExporting, setBulkExporting] = useState(false);
+
     // Merge modal state
     const [mergeModalOpen, setMergeModalOpen] = useState(false);
     const [mergeSourceVendor, setMergeSourceVendor] = useState<{ id: string; name: string } | null>(null);
 
-    // Close dropdown when clicking outside
+    // Close dropdowns when clicking outside
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
                 setOpenDropdownId(null);
             }
+            if (bulkActionRef.current && !bulkActionRef.current.contains(event.target as Node)) {
+                setBulkActionOpen(false);
+            }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    // Clear selection when subscriptions change
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [subscriptions]);
 
     const handleMergeClick = (vendorId: string, vendorName: string) => {
         setMergeSourceVendor({ id: vendorId, name: vendorName });
@@ -133,10 +153,180 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
 
     const displaySubscriptions = limit ? filteredSubscriptions.slice(0, limit) : filteredSubscriptions;
 
+    // Selection handlers (must be after displaySubscriptions is defined)
+    const toggleSelectAll = useCallback(() => {
+        if (selectedIds.size === displaySubscriptions.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(displaySubscriptions.map(s => s.id)));
+        }
+    }, [displaySubscriptions, selectedIds.size]);
+
+    const toggleSelectOne = useCallback((id: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    }, []);
+
+    const selectedSubscriptions = useMemo(() => {
+        return displaySubscriptions.filter(s => selectedIds.has(s.id));
+    }, [displaySubscriptions, selectedIds]);
+
+    // Bulk delete handler
+    const handleBulkDelete = async () => {
+        setIsBulkDeleting(true);
+        try {
+            if (bulkDeleteType === 'vendor') {
+                // Get unique vendor IDs from selected subscriptions
+                const vendorIds = new Set(selectedSubscriptions.map(s => s.vendorId).filter(Boolean));
+                for (const vendorId of vendorIds) {
+                    await subscriptionService.deleteVendor(vendorId!, true);
+                }
+            } else {
+                // Delete subscriptions one by one
+                for (const sub of selectedSubscriptions) {
+                    await subscriptionService.delete(sub.id);
+                }
+            }
+            setSelectedIds(new Set());
+            setBulkDeleteModalOpen(false);
+            if (onRefresh) onRefresh();
+        } catch (error) {
+            console.error('Bulk delete failed:', error);
+            alert('Some items failed to delete. Please try again.');
+        } finally {
+            setIsBulkDeleting(false);
+        }
+    };
+
+    // Export to CSV handler
+    const handleExportCSV = async () => {
+        setBulkExporting(true);
+        setBulkActionOpen(false);
+        try {
+            // Fetch line items for all selected subscriptions
+            const allLineItems: any[] = [];
+            for (const sub of selectedSubscriptions) {
+                try {
+                    const lineItems = await subscriptionService.getLineItems(sub.id);
+                    // Enrich each line item with subscription/vendor info
+                    lineItems.forEach((li: any) => {
+                        allLineItems.push({
+                            subscription_name: sub.name,
+                            vendor_name: (sub as any).vendorName || '',
+                            category: sub.category || '',
+                            service_name: li.serviceName || li.description || '',
+                            description: li.description || '',
+                            amount: li.total_amount || li.totalAmount || 0,
+                            quantity: li.quantity || 1,
+                            unit_price: li.unit_price || li.unitPrice || 0,
+                            period_start: li.period_start || li.periodStart || '',
+                            period_end: li.period_end || li.periodEnd || '',
+                            billing_month: li.billing_month_override || li.billingMonthOverride || '',
+                            invoice_date: li.invoiceDate || '',
+                            invoice_number: li.invoiceNumber || '',
+                            owner: sub.owner?.name || '',
+                            owner_email: sub.owner?.email || '',
+                            billing_cycle: sub.billingCycle || '',
+                            status: sub.status || '',
+                        });
+                    });
+                } catch (e) {
+                    console.error(`Failed to fetch line items for ${sub.name}:`, e);
+                }
+            }
+
+            if (allLineItems.length === 0) {
+                alert('No line items found for the selected subscriptions.');
+                return;
+            }
+
+            // Generate CSV
+            const csv = Papa.unparse(allLineItems);
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `subscription_line_items_export_${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Export failed:', error);
+            alert('Failed to export data. Please try again.');
+        } finally {
+            setBulkExporting(false);
+        }
+    };
+
     return (
-        <div className="bg-white border border-slate-200 rounded-xl shadow-clean overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4">
-                <h3 className="font-semibold text-slate-900 whitespace-nowrap">{title}</h3>
+        <div className="bg-white border border-slate-200 rounded-xl shadow-clean flex flex-col max-h-[calc(100vh-200px)]">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4 flex-shrink-0 bg-white">
+                <div className="flex items-center gap-4">
+                    <h3 className="font-semibold text-slate-900 whitespace-nowrap">{title}</h3>
+
+                    {/* Bulk Actions Dropdown - shown when items selected */}
+                    {selectedIds.size > 0 && (
+                        <div className="relative" ref={bulkActionRef}>
+                            <button
+                                onClick={() => setBulkActionOpen(!bulkActionOpen)}
+                                disabled={bulkExporting}
+                                className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                            >
+                                {bulkExporting ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <>
+                                        <span>{selectedIds.size} selected</span>
+                                        <ChevronDown className="w-4 h-4" />
+                                    </>
+                                )}
+                            </button>
+
+                            {bulkActionOpen && (
+                                <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-lg z-30 py-1">
+                                    <button
+                                        onClick={handleExportCSV}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 text-left"
+                                    >
+                                        <Download className="w-4 h-4" />
+                                        Export Line Items to CSV
+                                    </button>
+                                    <div className="border-t border-slate-100 my-1" />
+                                    <button
+                                        onClick={() => {
+                                            setBulkDeleteType('subscription');
+                                            setBulkDeleteModalOpen(true);
+                                            setBulkActionOpen(false);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 text-left"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                        Delete Subscriptions ({selectedIds.size})
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setBulkDeleteType('vendor');
+                                            setBulkDeleteModalOpen(true);
+                                            setBulkActionOpen(false);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 text-left"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                        Delete Vendors & All Data
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
 
                 <div className="flex items-center gap-4 flex-1 justify-end">
                     {enableSearch && (
@@ -160,10 +350,18 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                 </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-auto flex-1">
                 <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-100">
+                    <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-100 sticky top-0 z-10">
                         <tr>
+                            <th className="px-3 py-3 w-10">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedIds.size === displaySubscriptions.length && displaySubscriptions.length > 0}
+                                    onChange={toggleSelectAll}
+                                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                            </th>
                             <th
                                 className="px-6 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
                                 onClick={() => handleSort('name')}
@@ -248,72 +446,87 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                         {displaySubscriptions.map((sub) => (
                             <tr
                                 key={sub.id}
-                                className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
-                                onClick={() => window.location.href = `/subscriptions/${sub.id}`}
+                                className="hover:bg-slate-50/50 transition-colors group"
                             >
+                                <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(sub.id)}
+                                        onChange={() => toggleSelectOne(sub.id)}
+                                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                    />
+                                </td>
                                 <td className="px-6 py-4">
-                                    <div className="flex items-center gap-3">
+                                    <Link href={`/subscriptions/${sub.id}`} className="flex items-center gap-3">
                                         <VendorLogo name={sub.name} logo={sub.logo} />
                                         <div>
                                             <div className="font-medium text-slate-900">{sub.name}</div>
                                             <div className="text-xs text-slate-500">{sub.category}</div>
                                         </div>
-                                    </div>
+                                    </Link>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <span className="text-slate-600">{(sub as any).vendorName || '-'}</span>
+                                    <Link href={`/subscriptions/${sub.id}`} className="block text-slate-600">{(sub as any).vendorName || '-'}</Link>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <span className={cn(
-                                        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
-                                        sub.status === 'Active' && "bg-slate-50 text-slate-700 border-slate-200",
-                                        sub.status === 'Review' && "bg-amber-50 text-amber-900 border-amber-200", // Subtle warning color
-                                        sub.status === 'Cancelled' && "bg-rose-50 text-rose-900 border-rose-200", // Subtle error color
-                                    )}>
-                                        {sub.status === 'Active' && <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />}
-                                        {sub.status === 'Review' && <AlertCircle className="w-3 h-3" />}
-                                        {sub.status}
-                                    </span>
+                                    <Link href={`/subscriptions/${sub.id}`} className="block">
+                                        <span className={cn(
+                                            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
+                                            sub.status === 'Active' && "bg-slate-50 text-slate-700 border-slate-200",
+                                            sub.status === 'Review' && "bg-amber-50 text-amber-900 border-amber-200",
+                                            sub.status === 'Cancelled' && "bg-rose-50 text-rose-900 border-rose-200",
+                                        )}>
+                                            {sub.status === 'Active' && <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />}
+                                            {sub.status === 'Review' && <AlertCircle className="w-3 h-3" />}
+                                            {sub.status}
+                                        </span>
+                                    </Link>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <div className="font-medium text-slate-900">{formatCurrency(sub.cost)}</div>
-                                    <div className="text-xs text-slate-400">{sub.billingCycle}</div>
+                                    <Link href={`/subscriptions/${sub.id}`} className="block">
+                                        <div className="font-medium text-slate-900">{formatCurrency(sub.cost)}</div>
+                                        <div className="text-xs text-slate-400">{sub.billingCycle}</div>
+                                    </Link>
                                 </td>
                                 <td className="px-6 py-4">
-                                    {(() => {
-                                        // Handle null/undefined/invalid dates
-                                        if (!sub.renewalDate || sub.renewalDate === 'null' || sub.renewalDate === '') {
-                                            return <div className="text-slate-400">—</div>;
-                                        }
-                                        const renewalDate = new Date(sub.renewalDate);
-                                        // Check for invalid date (epoch = 1970, or 1969 in local timezone)
-                                        if (isNaN(renewalDate.getTime()) || renewalDate.getFullYear() < 1980) {
-                                            return <div className="text-slate-400">—</div>;
-                                        }
-                                        const isPastDue = renewalDate < new Date();
-                                        return (
-                                            <>
-                                                <div className={cn("text-slate-700", isPastDue && "text-red-600 font-medium")}>
-                                                    {formatDate(sub.renewalDate)}
-                                                    {isPastDue && <span className="ml-1 text-xs">(Past Due)</span>}
-                                                </div>
-                                                <div className="text-xs text-slate-400">{sub.paymentMethod}</div>
-                                            </>
-                                        );
-                                    })()}
+                                    <Link href={`/subscriptions/${sub.id}`} className="block">
+                                        {(() => {
+                                            // Handle null/undefined/invalid dates
+                                            if (!sub.renewalDate || sub.renewalDate === 'null' || sub.renewalDate === '') {
+                                                return <div className="text-slate-400">—</div>;
+                                            }
+                                            const renewalDate = new Date(sub.renewalDate);
+                                            // Check for invalid date (epoch = 1970, or 1969 in local timezone)
+                                            if (isNaN(renewalDate.getTime()) || renewalDate.getFullYear() < 1980) {
+                                                return <div className="text-slate-400">—</div>;
+                                            }
+                                            const isPastDue = renewalDate < new Date();
+                                            return (
+                                                <>
+                                                    <div className={cn("text-slate-700", isPastDue && "text-red-600 font-medium")}>
+                                                        {formatDate(sub.renewalDate)}
+                                                        {isPastDue && <span className="ml-1 text-xs">(Past Due)</span>}
+                                                    </div>
+                                                    <div className="text-xs text-slate-400">{sub.paymentMethod}</div>
+                                                </>
+                                            );
+                                        })()}
+                                    </Link>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <UtilizationBar total={sub.seats.total} used={sub.seats.used} />
+                                    <Link href={`/subscriptions/${sub.id}`} className="block">
+                                        <UtilizationBar total={sub.seats.total} used={sub.seats.used} />
+                                    </Link>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <div className="flex items-center gap-2">
+                                    <Link href={`/subscriptions/${sub.id}`} className="flex items-center gap-2">
                                         <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-600">
                                             {sub.owner.name.split(' ').map(n => n[0]).join('')}
                                         </div>
                                         <span className="text-slate-600 truncate max-w-[100px]">{sub.owner.name}</span>
-                                    </div>
+                                    </Link>
                                 </td>
-                                <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                                <td className="px-6 py-4 text-right">
                                     <div className="relative" ref={openDropdownId === sub.id ? dropdownRef : undefined}>
                                         <button
                                             onClick={(e) => {
@@ -327,16 +540,14 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
 
                                         {openDropdownId === sub.id && (
                                             <div className="absolute right-0 bottom-full mb-1 w-48 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1">
-                                                <button
-                                                    onClick={() => {
-                                                        router.push(`/subscriptions/${sub.id}`);
-                                                        setOpenDropdownId(null);
-                                                    }}
+                                                <Link
+                                                    href={`/subscriptions/${sub.id}`}
+                                                    onClick={() => setOpenDropdownId(null)}
                                                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 text-left"
                                                 >
                                                     <Eye className="w-4 h-4" />
                                                     View Details
-                                                </button>
+                                                </Link>
                                                 <div className="border-t border-slate-100 my-1" />
                                                 {sub.vendorId && (
                                                     <button
@@ -373,6 +584,25 @@ export function SubscriptionTable({ subscriptions, enableSearch = false, limit, 
                 }}
                 sourceVendor={mergeSourceVendor}
                 onMergeComplete={handleMergeComplete}
+            />
+
+            {/* Bulk Delete Confirmation Modal */}
+            <ConfirmDeleteModal
+                isOpen={bulkDeleteModalOpen}
+                onClose={() => setBulkDeleteModalOpen(false)}
+                onConfirm={handleBulkDelete}
+                entityName={
+                    bulkDeleteType === 'vendor'
+                        ? `${new Set(selectedSubscriptions.map(s => s.vendorId).filter(Boolean)).size} vendor(s)`
+                        : `${selectedIds.size} subscription(s)`
+                }
+                entityType={bulkDeleteType === 'vendor' ? 'Vendor' : 'Subscription'}
+                isDeleting={isBulkDeleting}
+                cascadeImpact={
+                    bulkDeleteType === 'vendor'
+                        ? { subscriptions: selectedIds.size }
+                        : undefined
+                }
             />
         </div>
     );

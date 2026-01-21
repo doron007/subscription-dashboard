@@ -127,7 +127,7 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
             }
 
             await subscriptionService.update(params.id, payload);
-            router.push('/');
+            router.push('/subscriptions');
             router.refresh();
         } catch (error) {
             alert('Failed to update subscription');
@@ -162,11 +162,10 @@ export default function SubscriptionDetailPage({ params }: { params: { id: strin
         try {
             if (deleteType === 'vendor' && vendor) {
                 await subscriptionService.deleteVendor(vendor.id, true);
-                router.push('/'); // Or to vendors list if exists
             } else {
                 await subscriptionService.delete(params.id);
-                router.push('/');
             }
+            router.push('/subscriptions');
             router.refresh();
         } catch (error) {
             console.error('Failed to delete:', error);

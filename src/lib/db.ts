@@ -191,65 +191,72 @@ export const db = {
             let deletedLineItems = 0;
 
             if (subIds.length > 0) {
-                // Delete line items first (via invoices)
-                const { data: invoices } = await supabase
-                    .from('sub_invoices')
-                    .select('id')
+                // 1. Get services FIRST - need their IDs to delete line items by service_id
+                const { data: services, count: svcCount } = await supabase
+                    .from('sub_subscription_services')
+                    .select('id', { count: 'exact' })
                     .in('subscription_id', subIds);
+                deletedServices = svcCount || 0;
+                const serviceIds = services?.map(s => s.id) || [];
 
-                const invoiceIds = invoices?.map(i => i.id) || [];
-                if (invoiceIds.length > 0) {
-                    // Count first, then delete
-                    const { count: liCount } = await supabase
+                // 2. Delete line items by service_id FIRST (critical - avoids FK violation)
+                if (serviceIds.length > 0) {
+                    const { count: liByServiceCount } = await supabase
                         .from('sub_invoice_line_items')
                         .select('*', { count: 'exact', head: true })
-                        .in('invoice_id', invoiceIds);
-                    deletedLineItems = liCount || 0;
+                        .in('service_id', serviceIds);
+                    deletedLineItems = liByServiceCount || 0;
 
                     await supabase
                         .from('sub_invoice_line_items')
                         .delete()
-                        .in('invoice_id', invoiceIds);
+                        .in('service_id', serviceIds);
                 }
 
-                // Count then delete invoices
-                const { count: invCount } = await supabase
+                // 3. Get invoices and delete any remaining line items by invoice_id
+                const { data: invoices, count: invCount } = await supabase
                     .from('sub_invoices')
-                    .select('*', { count: 'exact', head: true })
+                    .select('id', { count: 'exact' })
                     .in('subscription_id', subIds);
                 deletedInvoices = invCount || 0;
+                const invoiceIds = invoices?.map(i => i.id) || [];
 
-                await supabase
-                    .from('sub_invoices')
-                    .delete()
-                    .in('subscription_id', subIds);
+                if (invoiceIds.length > 0) {
+                    // Delete any remaining line items by invoice_id
+                    await supabase
+                        .from('sub_invoice_line_items')
+                        .delete()
+                        .in('invoice_id', invoiceIds);
 
-                // Count then delete services
-                const { count: svcCount } = await supabase
-                    .from('sub_subscription_services')
-                    .select('*', { count: 'exact', head: true })
-                    .in('subscription_id', subIds);
-                deletedServices = svcCount || 0;
+                    // 4. Delete invoices
+                    await supabase
+                        .from('sub_invoices')
+                        .delete()
+                        .in('id', invoiceIds);
+                }
 
-                await supabase
-                    .from('sub_subscription_services')
-                    .delete()
-                    .in('subscription_id', subIds);
+                // 5. Delete services (now safe - no line items reference them)
+                if (serviceIds.length > 0) {
+                    await supabase
+                        .from('sub_subscription_services')
+                        .delete()
+                        .in('id', serviceIds);
+                }
 
-                // Delete assignments
+                // 6. Delete assignments
                 await supabase
                     .from('sub_assignments')
                     .delete()
                     .in('subscription_id', subIds);
 
-                // Delete subscriptions
+                // 7. Delete subscriptions
                 await supabase
                     .from('sub_subscriptions')
                     .delete()
                     .in('id', subIds);
             }
 
-            // Finally delete the vendor
+            // 8. Finally delete the vendor
             const { error } = await supabase
                 .from('sub_vendors')
                 .delete()
@@ -1770,9 +1777,25 @@ export const db = {
         },
 
         delete: async (id: string): Promise<boolean> => {
-            // Manual cascade delete: Line Items -> Invoices -> Services -> Subscription
+            // Manual cascade delete: Line Items (by service_id) -> Line Items (by invoice_id) -> Invoices -> Services -> Assignments -> Subscription
             try {
-                // 1. Get invoices to find related line items
+                // 1. Get services for this subscription to delete line items by service_id first
+                const { data: services } = await supabase
+                    .from('sub_subscription_services')
+                    .select('id')
+                    .eq('subscription_id', id);
+
+                const serviceIds = services?.map(s => s.id) || [];
+
+                // 2. Delete line items by service_id FIRST (critical - avoids FK violation)
+                if (serviceIds.length > 0) {
+                    await supabase
+                        .from('sub_invoice_line_items')
+                        .delete()
+                        .in('service_id', serviceIds);
+                }
+
+                // 3. Get invoices to find any remaining line items
                 const { data: invoices } = await supabase
                     .from('sub_invoices')
                     .select('id')
@@ -1781,37 +1804,34 @@ export const db = {
                 const invoiceIds = invoices?.map(i => i.id) || [];
 
                 if (invoiceIds.length > 0) {
-                    // 2. Delete line items
+                    // 4. Delete any remaining line items by invoice_id
                     await supabase
                         .from('sub_invoice_line_items')
                         .delete()
                         .in('invoice_id', invoiceIds);
 
-                    // 3. Delete invoices
+                    // 5. Delete invoices
                     await supabase
                         .from('sub_invoices')
                         .delete()
                         .in('id', invoiceIds);
                 }
 
-                // 4. Delete services
-                // Note: Check if any line items are orphan linked to services but not invoices?
-                // Usually line items are in invoices.
-                // Just in case, try deleting line items by service_id too if needed?
-                // Assuming line items always have invoice_id.
-                // 3.5 Delete assignments
+                // 6. Delete services (now safe - no line items reference them)
+                if (serviceIds.length > 0) {
+                    await supabase
+                        .from('sub_subscription_services')
+                        .delete()
+                        .in('id', serviceIds);
+                }
+
+                // 7. Delete assignments
                 await supabase
                     .from('sub_assignments')
                     .delete()
                     .eq('subscription_id', id);
 
-                // 4. Delete services
-                await supabase
-                    .from('sub_subscription_services')
-                    .delete()
-                    .eq('subscription_id', id);
-
-                // 5. Delete subscription
+                // 8. Delete subscription
                 const { error } = await supabase
                     .from('sub_subscriptions')
                     .delete()

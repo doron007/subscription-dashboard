@@ -1,5 +1,40 @@
 import type { Subscription, Transaction } from '@/types';
 
+// Session cache for reports with 5-minute TTL
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface CacheEntry<T> {
+    data: T;
+    timestamp: number;
+}
+
+class SessionCache<T> {
+    private cache = new Map<string, CacheEntry<T>>();
+
+    get(key: string): T | null {
+        const entry = this.cache.get(key);
+        if (!entry) return null;
+
+        // Check if expired
+        if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+            this.cache.delete(key);
+            return null;
+        }
+
+        return entry.data;
+    }
+
+    set(key: string, data: T): void {
+        this.cache.set(key, { data, timestamp: Date.now() });
+    }
+
+    clear(): void {
+        this.cache.clear();
+    }
+}
+
+const reportCache = new SessionCache<any>();
+
 export const subscriptionService = {
     getAll: async (): Promise<Subscription[]> => {
         const response = await fetch('/api/subscriptions', { cache: 'no-store' }); // Ensure fresh data
@@ -219,5 +254,40 @@ export const subscriptionService = {
         });
         if (!response.ok) throw new Error('Failed to delete line item');
         return response.json();
+    },
+
+    // Reports - Server-side aggregated data with session caching
+    getAggregatedReport: async (params: {
+        startDate: string;
+        endDate: string;
+        groupBy: 'vendor' | 'service';
+    }) => {
+        const cacheKey = `report_${params.startDate}_${params.endDate}_${params.groupBy}`;
+
+        // Check session cache
+        const cached = reportCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        const searchParams = new URLSearchParams({
+            startDate: params.startDate,
+            endDate: params.endDate,
+            groupBy: params.groupBy
+        });
+        const response = await fetch(`/api/reports/aggregated?${searchParams}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Failed to fetch aggregated report');
+
+        const data = await response.json();
+
+        // Store in session cache
+        reportCache.set(cacheKey, data);
+
+        return data;
+    },
+
+    // Invalidate report cache (call after data changes)
+    invalidateReportCache: () => {
+        reportCache.clear();
     }
 };
