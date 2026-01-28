@@ -3,8 +3,9 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { subscriptionService } from '@/services/subscriptionService';
 import type { Invoice, InvoiceLineItem } from '@/types';
-import { FileText, Loader2, ChevronDown, ChevronRight, Calendar, CheckSquare, Square, ArrowRight } from 'lucide-react';
+import { FileText, Loader2, ChevronDown, ChevronRight, Calendar, CheckSquare, Square, ArrowRight, Trash2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
+import { ConfirmDeleteModal } from '@/components/modals/ConfirmDeleteModal';
 
 interface InvoicesTabProps {
     subscriptionId: string;
@@ -56,6 +57,11 @@ export function InvoicesTab({ subscriptionId }: InvoicesTabProps) {
     const [showMoveModal, setShowMoveModal] = useState(false);
     const [targetMonth, setTargetMonth] = useState('');
     const [isMoving, setIsMoving] = useState(false);
+
+    // Deletion state
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [invoiceToDelete, setInvoiceToDelete] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
         async function loadInvoices() {
@@ -205,6 +211,36 @@ export function InvoicesTab({ subscriptionId }: InvoicesTabProps) {
         }
     };
 
+    const handleDeleteClick = (e: React.MouseEvent, invoiceId: string) => {
+        e.stopPropagation();
+        setInvoiceToDelete(invoiceId);
+        setShowDeleteModal(true);
+    };
+
+    const confirmDelete = async () => {
+        if (!invoiceToDelete) return;
+
+        setIsDeleting(true);
+        try {
+            await subscriptionService.deleteInvoice(invoiceToDelete);
+
+            // Remove from local state
+            setInvoices(prev => prev.filter(inv => inv.id !== invoiceToDelete));
+
+            // Clear other states if needed
+            if (expandedInvoice === invoiceToDelete) {
+                setExpandedInvoice(null);
+            }
+
+            setShowDeleteModal(false);
+            setInvoiceToDelete(null);
+        } catch (error) {
+            console.error('Failed to delete invoice:', error);
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
     // Generate month options
     const monthOptions = useMemo(() => {
         const options: { value: string; label: string }[] = [];
@@ -288,9 +324,44 @@ export function InvoicesTab({ subscriptionId }: InvoicesTabProps) {
                             </div>
                         </div>
                         <div className="flex items-center gap-4">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[invoice.status] || 'bg-slate-100 text-slate-600'}`}>
-                                {invoice.status}
-                            </span>
+                            <div className="relative group" onClick={(e) => e.stopPropagation()}>
+                                <select
+                                    value={invoice.status}
+                                    onChange={async (e) => {
+                                        const newStatus = e.target.value as 'Paid' | 'Pending' | 'Overdue';
+
+                                        // Optimistic update
+                                        setInvoices(prev => prev.map(inv =>
+                                            inv.id === invoice.id ? { ...inv, status: newStatus } : inv
+                                        ));
+
+                                        try {
+                                            await subscriptionService.updateInvoice(invoice.id, { status: newStatus });
+                                        } catch (error) {
+                                            console.error('Failed to update status:', error);
+                                            // Revert on error
+                                            setInvoices(prev => prev.map(inv =>
+                                                inv.id === invoice.id ? { ...inv, status: invoice.status } : inv
+                                            ));
+                                        }
+                                    }}
+                                    className={`appearance-none cursor-pointer pl-2 pr-6 py-0.5 rounded-full text-xs font-medium border-0 focus:ring-1 focus:ring-offset-1 focus:ring-indigo-500 ${statusColors[invoice.status] || 'bg-slate-100 text-slate-600'}`}
+                                >
+                                    <option value="Paid">Paid</option>
+                                    <option value="Pending">Pending</option>
+                                    <option value="Overdue">Overdue</option>
+                                </select>
+                                <ChevronDown className={`w-3 h-3 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${invoice.status === 'Paid' ? 'text-green-700' : invoice.status === 'Pending' ? 'text-amber-700' : 'text-red-700'}`} />
+                            </div>
+
+                            <button
+                                onClick={(e) => handleDeleteClick(e, invoice.id)}
+                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete Invoice"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+
                             <span className="font-semibold text-slate-800">
                                 {formatCurrency(invoice.totalAmount, invoice.currency)}
                             </span>
@@ -376,9 +447,8 @@ export function InvoicesTab({ subscriptionId }: InvoicesTabProps) {
                                                         {group.items.map((item) => (
                                                             <tr
                                                                 key={item.id}
-                                                                className={`border-t border-slate-100 cursor-pointer transition-colors ${
-                                                                    selectedItems.has(item.id) ? 'bg-indigo-50' : 'hover:bg-white'
-                                                                }`}
+                                                                className={`border-t border-slate-100 cursor-pointer transition-colors ${selectedItems.has(item.id) ? 'bg-indigo-50' : 'hover:bg-white'
+                                                                    }`}
                                                                 onClick={() => toggleItemSelection(item.id)}
                                                             >
                                                                 <td className="py-2">
@@ -481,6 +551,20 @@ export function InvoicesTab({ subscriptionId }: InvoicesTabProps) {
                     Total: {formatCurrency(invoices.reduce((sum, inv) => sum + inv.totalAmount, 0))}
                 </span>
             </div>
+
+            {/* Delete Confirmation Modal */}
+            <ConfirmDeleteModal
+                isOpen={showDeleteModal}
+                onClose={() => {
+                    setShowDeleteModal(false);
+                    setInvoiceToDelete(null);
+                }}
+                onConfirm={confirmDelete}
+                entityName="this invoice"
+                entityType="Invoice"
+                cascadeImpact={{ lineItems: invoiceToDelete && lineItems[invoiceToDelete] ? lineItems[invoiceToDelete].length : 0 }}
+                isDeleting={isDeleting}
+            />
         </div>
     );
 }

@@ -5,6 +5,7 @@ import { subscriptionService } from '@/services/subscriptionService';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Download, TrendingUp, Maximize2, Minimize2, Filter, X, Search, Loader2 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from 'recharts';
+import { MultiSelect } from '@/components/ui/MultiSelect';
 import Papa from 'papaparse';
 import {
     format, parseISO, startOfYear, endOfYear, startOfQuarter, endOfQuarter,
@@ -104,14 +105,16 @@ export default function ReportsPage() {
     const [customEndDate, setCustomEndDate] = useState<string>('');
 
     // Client-side filters (applied to already-aggregated data)
-    const [selectedMonth, setSelectedMonth] = useState<string>('');
-    const [selectedVendor, setSelectedVendor] = useState<string>('');
-    const [selectedService, setSelectedService] = useState<string>('');
+    // Client-side filters (applied to already-aggregated data)
+    const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
+    const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
+    const [selectedServices, setSelectedServices] = useState<string[]>([]);
     const [searchQuery, setSearchQuery] = useState<string>('');
 
     // UI State
     const [expandedChart, setExpandedChart] = useState<ExpandedChart>(null);
     const [chartsReady, setChartsReady] = useState(false);
+    const [hoveredStackItem, setHoveredStackItem] = useState<string | null>(null);
 
     // Fetch aggregated data from server
     const fetchReport = useCallback(async () => {
@@ -160,15 +163,15 @@ export default function ReportsPage() {
         }
 
         // Vendor/Service filter (depending on groupBy)
-        if (groupBy === 'vendor' && selectedVendor) {
-            filtered = filtered.filter(item => item.name === selectedVendor);
+        if (groupBy === 'vendor' && selectedVendors.length > 0) {
+            filtered = filtered.filter(item => selectedVendors.includes(item.name));
         }
-        if (groupBy === 'service' && selectedService) {
-            filtered = filtered.filter(item => item.name === selectedService);
+        if (groupBy === 'service' && selectedServices.length > 0) {
+            filtered = filtered.filter(item => selectedServices.includes(item.name));
         }
 
         return filtered;
-    }, [reportData, searchQuery, groupBy, selectedVendor, selectedService]);
+    }, [reportData, searchQuery, groupBy, selectedVendors, selectedServices]);
 
     // Filter monthly trend data
     const filteredTrend = useMemo(() => {
@@ -177,17 +180,30 @@ export default function ReportsPage() {
         let trend = reportData.monthlyTrend;
 
         // Month filter
-        if (selectedMonth) {
-            trend = trend.filter(point => point.month === selectedMonth);
+        if (selectedMonths.length > 0) {
+            trend = trend.filter(point => selectedMonths.includes(point.month));
         }
 
         // If we have a vendor/service filter, recalculate totals
-        if ((groupBy === 'vendor' && selectedVendor) || (groupBy === 'service' && selectedService)) {
-            const filterKey = groupBy === 'vendor' ? selectedVendor : selectedService;
-            trend = trend.map(point => ({
-                ...point,
-                total: point[filterKey] || 0
-            }));
+        if ((groupBy === 'vendor' && selectedVendors.length > 0) || (groupBy === 'service' && selectedServices.length > 0)) {
+            trend = trend.map(point => {
+                let newTotal = 0;
+                // Only sum up the selected vendors/services
+                if (groupBy === 'vendor') {
+                    selectedVendors.forEach(v => {
+                        newTotal += (point[v] || 0);
+                    })
+                } else {
+                    selectedServices.forEach(s => {
+                        newTotal += (point[s] || 0);
+                    })
+                }
+
+                return {
+                    ...point,
+                    total: newTotal
+                };
+            });
         }
 
         // Search filter - filter to matching keys only
@@ -209,7 +225,7 @@ export default function ReportsPage() {
         }
 
         return trend;
-    }, [reportData, selectedMonth, groupBy, selectedVendor, selectedService, searchQuery]);
+    }, [reportData, selectedMonths, groupBy, selectedVendors, selectedServices, searchQuery]);
 
     // Get visible stack keys based on filters
     const visibleStackKeys = useMemo(() => {
@@ -222,15 +238,15 @@ export default function ReportsPage() {
             keys = keys.filter(key => key.toLowerCase().includes(query));
         }
 
-        if (groupBy === 'vendor' && selectedVendor) {
-            keys = keys.filter(key => key === selectedVendor);
+        if (groupBy === 'vendor' && selectedVendors.length > 0) {
+            keys = keys.filter(key => selectedVendors.includes(key));
         }
-        if (groupBy === 'service' && selectedService) {
-            keys = keys.filter(key => key === selectedService);
+        if (groupBy === 'service' && selectedServices.length > 0) {
+            keys = keys.filter(key => selectedServices.includes(key));
         }
 
         return keys;
-    }, [reportData, searchQuery, groupBy, selectedVendor, selectedService]);
+    }, [reportData, searchQuery, groupBy, selectedVendors, selectedServices]);
 
     // Color map for consistent colors
     const colorMap = useMemo(() => {
@@ -241,40 +257,46 @@ export default function ReportsPage() {
         return map;
     }, [reportData]);
 
-    // Month breakdown data (when a specific month is selected)
+    // Month breakdown data (aggregated if multiple months selected)
     const monthBreakdownData = useMemo(() => {
-        if (!selectedMonth || !reportData) return [];
+        if (!reportData) return [];
+        if (selectedMonths.length === 0) return []; // Should rely on total breakdown if no specific month
 
-        const monthData = reportData.monthlyTrend.find(p => p.month === selectedMonth);
-        if (!monthData) return [];
+        // Aggregate data for all selected months
+        const relevantMonths = reportData.monthlyTrend.filter(p => selectedMonths.includes(p.month));
 
-        const breakdown: AggregatedData[] = [];
+        const breakdownMap = new Map<string, number>();
         let total = 0;
 
-        reportData.stackKeys.forEach((key, index) => {
-            const cost = monthData[key] || 0;
-            if (cost > 0) {
-                // Apply search filter
-                if (searchQuery && !key.toLowerCase().includes(searchQuery.toLowerCase())) {
-                    return;
+        if (relevantMonths.length === 0) return [];
+
+        relevantMonths.forEach(monthData => {
+            reportData.stackKeys.forEach(key => {
+                const cost = monthData[key] || 0;
+                if (cost > 0) {
+                    breakdownMap.set(key, (breakdownMap.get(key) || 0) + cost);
+                    total += cost;
                 }
-                breakdown.push({
-                    name: key,
-                    cost,
-                    percentage: 0,
-                    colorIndex: index
-                });
-                total += cost;
-            }
+            });
         });
 
-        // Calculate percentages
-        breakdown.forEach(item => {
-            item.percentage = total > 0 ? (item.cost / total) * 100 : 0;
+        const breakdown: AggregatedData[] = [];
+        breakdownMap.forEach((cost, key) => {
+            // Apply search filter
+            if (searchQuery && !key.toLowerCase().includes(searchQuery.toLowerCase())) {
+                return;
+            }
+            breakdown.push({
+                name: key,
+                cost,
+                percentage: total > 0 ? (cost / total) * 100 : 0,
+                colorIndex: reportData.stackKeys.indexOf(key)
+            });
         });
 
         return breakdown.sort((a, b) => b.cost - a.cost);
-    }, [selectedMonth, reportData, searchQuery]);
+    }, [selectedMonths, reportData, searchQuery]);
+
 
     const handleExport = async () => {
         if (!reportData) return;
@@ -379,15 +401,21 @@ export default function ReportsPage() {
                     {payload
                         .filter((entry: any) => entry.value > 0)
                         .sort((a: any, b: any) => b.value - a.value)
-                        .map((entry: any, index: number) => (
-                            <div key={index} className="flex items-center justify-between gap-4 text-sm">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
-                                    <span className="text-slate-600 truncate max-w-[130px]">{entry.dataKey}</span>
+                        .map((entry: any, index: number) => {
+                            const isHovered = entry.dataKey === hoveredStackItem;
+                            return (
+                                <div
+                                    key={index}
+                                    className={`flex items-center justify-between gap-4 text-sm transition-all duration-200 ${isHovered ? 'bg-indigo-50 -mx-2 px-2 py-1 rounded-md' : 'py-0.5'}`}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
+                                        <span className={`truncate max-w-[130px] ${isHovered ? 'text-indigo-900 font-semibold' : 'text-slate-600'}`}>{entry.dataKey}</span>
+                                    </div>
+                                    <span className={`font-medium ${isHovered ? 'text-indigo-700 font-bold' : 'text-slate-900'}`}>${entry.value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
-                                <span className="font-medium text-slate-900">${entry.value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                            </div>
-                        ))}
+                            );
+                        })}
                 </div>
             </div>
         );
@@ -433,7 +461,7 @@ export default function ReportsPage() {
                             value={quickFilter}
                             onChange={(e) => {
                                 setQuickFilter(e.target.value as QuickFilter);
-                                setSelectedMonth('');
+                                setSelectedMonths([]);
                             }}
                             className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-lg focus:ring-indigo-500 focus:border-indigo-500 py-2 pl-3 pr-8"
                         >
@@ -507,50 +535,39 @@ export default function ReportsPage() {
                     </div>
 
                     {/* Month Filter */}
-                    <select
-                        value={selectedMonth}
-                        onChange={(e) => setSelectedMonth(e.target.value)}
-                        className={`text-xs font-medium rounded-lg border py-1.5 pl-2.5 pr-8 focus:ring-indigo-500 focus:border-indigo-500 ${selectedMonth ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}
-                    >
-                        <option value="">All Months</option>
-                        {reportData?.filters.availableMonths.map(month => (
-                            <option key={month} value={month}>{format(parseISO(month + '-01'), 'MMM yyyy')}</option>
-                        ))}
-                    </select>
+                    <MultiSelect
+                        placeholder="All Months"
+                        options={reportData?.filters.availableMonths.map(m => ({ label: format(parseISO(m + '-01'), 'MMM yyyy'), value: m })) || []}
+                        selected={selectedMonths}
+                        onChange={setSelectedMonths}
+                        className="w-48"
+                    />
 
                     {/* Vendor Filter */}
-                    <select
-                        value={selectedVendor}
-                        onChange={(e) => setSelectedVendor(e.target.value)}
-                        className={`text-xs font-medium rounded-lg border py-1.5 pl-2.5 pr-8 focus:ring-indigo-500 focus:border-indigo-500 ${selectedVendor ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}
-                        style={{ maxWidth: '200px' }}
-                    >
-                        <option value="">All Vendors</option>
-                        {reportData?.filters.availableVendors.map(vendor => (
-                            <option key={vendor} value={vendor}>{vendor}</option>
-                        ))}
-                    </select>
+                    <MultiSelect
+                        placeholder="All Vendors"
+                        options={reportData?.filters.availableVendors.map(v => ({ label: v, value: v })) || []}
+                        selected={selectedVendors}
+                        onChange={setSelectedVendors}
+                        className="w-48"
+                    />
 
                     {/* Service Filter */}
-                    <select
-                        value={selectedService}
-                        onChange={(e) => setSelectedService(e.target.value)}
-                        className={`text-xs font-medium rounded-lg border py-1.5 pl-2.5 pr-8 focus:ring-indigo-500 focus:border-indigo-500 ${selectedService ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}
-                        style={{ maxWidth: '200px' }}
-                    >
-                        <option value="">All Services</option>
-                        {reportData?.filters.availableServices.map(service => (
-                            <option key={service} value={service}>{service}</option>
-                        ))}
-                    </select>
+                    <MultiSelect
+                        placeholder="All Services"
+                        options={reportData?.filters.availableServices.map(s => ({ label: s, value: s })) || []}
+                        selected={selectedServices}
+                        onChange={setSelectedServices}
+                        className="w-48"
+                    />
 
                     {/* Clear Filters */}
-                    {(selectedMonth || selectedVendor || selectedService || searchQuery) && (
+                    {(selectedMonths.length > 0 || selectedVendors.length > 0 || selectedServices.length > 0 || searchQuery) && (
                         <button
                             onClick={() => {
-                                setSelectedMonth('');
-                                setSelectedVendor('');
-                                setSelectedService('');
+                                setSelectedMonths([]);
+                                setSelectedVendors([]);
+                                setSelectedServices([]);
                                 setSearchQuery('');
                             }}
                             className="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded-lg ml-auto transition-colors"
@@ -566,17 +583,17 @@ export default function ReportsPage() {
                     <div className="flex items-center justify-between mb-4">
                         <div>
                             <h3 className="text-sm font-bold text-slate-900">
-                                {selectedMonth
-                                    ? `Top Spending ${groupBy === 'vendor' ? 'Vendors' : 'Services'} in ${format(parseISO(selectedMonth + '-01'), 'MMMM yyyy')}`
+                                {selectedMonths.length > 0
+                                    ? `Top Spending ${groupBy === 'vendor' ? 'Vendors' : 'Services'} in Selected Months`
                                     : `Monthly Spend by ${groupBy === 'vendor' ? 'Vendor' : 'Service'}`
                                 }
                             </h3>
                             <p className="text-xs text-slate-500 mt-0.5">
-                                {selectedMonth
+                                {selectedMonths.length > 0
                                     ? 'Click on a bar to filter by that item, or clear the month filter to go back.'
                                     : `${format(parseISO(rangeStart), 'MMM yyyy')} - ${format(parseISO(rangeEnd), 'MMM yyyy')}`
                                 }
-                                {' • '}Total: <span className="font-semibold text-slate-700">${(selectedMonth ? monthBreakdownData.reduce((sum, d) => sum + d.cost, 0) : totalCost).toLocaleString()}</span>
+                                {' • '}Total: <span className="font-semibold text-slate-700">${(selectedMonths.length > 0 ? monthBreakdownData.reduce((sum, d) => sum + d.cost, 0) : totalCost).toLocaleString()}</span>
                             </p>
                         </div>
                         <button
@@ -587,10 +604,10 @@ export default function ReportsPage() {
                             {expandedChart === 'Trend' ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-4 h-4" />}
                         </button>
                     </div>
-                    <div style={{ width: '100%', height: expandedChart === 'Trend' ? 'calc(100% - 80px)' : (selectedMonth ? Math.max(350, monthBreakdownData.length * 32) : 350) }}>
+                    <div style={{ width: '100%', height: expandedChart === 'Trend' ? 'calc(100% - 80px)' : (selectedMonths.length > 0 ? Math.max(350, monthBreakdownData.length * 32) : 350) }}>
                         {chartsReady && (
-                            <ResponsiveContainer width="100%" height={expandedChart === 'Trend' ? '100%' : (selectedMonth ? Math.max(350, monthBreakdownData.length * 32) : 350)} minWidth={0} minHeight={0}>
-                                {selectedMonth ? (
+                            <ResponsiveContainer width="100%" height={expandedChart === 'Trend' ? '100%' : (selectedMonths.length === 1 ? Math.max(350, monthBreakdownData.length * 32) : 350)} minWidth={0} minHeight={0}>
+                                {selectedMonths.length === 1 ? (
                                     /* Month Selected: Pareto Chart */
                                     <BarChart data={monthBreakdownData} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 5 }} barCategoryGap="20%">
                                         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
@@ -616,8 +633,20 @@ export default function ReportsPage() {
                                                     fill={COLORS[entry.colorIndex % COLORS.length]}
                                                     className="cursor-pointer hover:opacity-80"
                                                     onClick={() => {
-                                                        if (groupBy === 'vendor') setSelectedVendor(entry.name);
-                                                        if (groupBy === 'service') setSelectedService(entry.name);
+                                                        if (groupBy === 'vendor') {
+                                                            if (selectedVendors.includes(entry.name)) {
+                                                                setSelectedVendors(selectedVendors.filter(v => v !== entry.name));
+                                                            } else {
+                                                                setSelectedVendors([...selectedVendors, entry.name]);
+                                                            }
+                                                        }
+                                                        if (groupBy === 'service') {
+                                                            if (selectedServices.includes(entry.name)) {
+                                                                setSelectedServices(selectedServices.filter(s => s !== entry.name));
+                                                            } else {
+                                                                setSelectedServices([...selectedServices, entry.name]);
+                                                            }
+                                                        }
                                                     }}
                                                 />
                                             ))}
@@ -632,7 +661,11 @@ export default function ReportsPage() {
                                             if (state && state.activeLabel) {
                                                 const clickedPoint = filteredTrend.find(p => p.label === state.activeLabel);
                                                 if (clickedPoint) {
-                                                    setSelectedMonth(clickedPoint.month);
+                                                    if (selectedMonths.includes(clickedPoint.month)) {
+                                                        setSelectedMonths(selectedMonths.filter(m => m !== clickedPoint.month));
+                                                    } else {
+                                                        setSelectedMonths([...selectedMonths, clickedPoint.month]);
+                                                    }
                                                 }
                                             }
                                         }}
@@ -662,10 +695,24 @@ export default function ReportsPage() {
                                                 stackId="spend"
                                                 fill={colorMap[key] || '#8b5cf6'}
                                                 radius={index === visibleStackKeys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                                                onMouseEnter={() => setHoveredStackItem(key)}
+                                                onMouseLeave={() => setHoveredStackItem(null)}
                                                 onClick={(data, idx, event) => {
                                                     if (event && event.stopPropagation) event.stopPropagation();
-                                                    if (groupBy === 'vendor') setSelectedVendor(key);
-                                                    if (groupBy === 'service') setSelectedService(key);
+                                                    if (groupBy === 'vendor') {
+                                                        if (selectedVendors.includes(key)) {
+                                                            setSelectedVendors(selectedVendors.filter(v => v !== key));
+                                                        } else {
+                                                            setSelectedVendors([...selectedVendors, key]);
+                                                        }
+                                                    }
+                                                    if (groupBy === 'service') {
+                                                        if (selectedServices.includes(key)) {
+                                                            setSelectedServices(selectedServices.filter(s => s !== key));
+                                                        } else {
+                                                            setSelectedServices([...selectedServices, key]);
+                                                        }
+                                                    }
                                                 }}
                                                 className="cursor-pointer hover:opacity-80 transition-opacity"
                                             />
@@ -718,8 +765,20 @@ export default function ReportsPage() {
                                                     fill={COLORS[entry.colorIndex % COLORS.length]}
                                                     className="cursor-pointer hover:opacity-80"
                                                     onClick={() => {
-                                                        if (groupBy === 'vendor') setSelectedVendor(entry.name);
-                                                        if (groupBy === 'service') setSelectedService(entry.name);
+                                                        if (groupBy === 'vendor') {
+                                                            if (selectedVendors.includes(entry.name)) {
+                                                                setSelectedVendors(selectedVendors.filter(v => v !== entry.name));
+                                                            } else {
+                                                                setSelectedVendors([...selectedVendors, entry.name]);
+                                                            }
+                                                        }
+                                                        if (groupBy === 'service') {
+                                                            if (selectedServices.includes(entry.name)) {
+                                                                setSelectedServices(selectedServices.filter(s => s !== entry.name));
+                                                            } else {
+                                                                setSelectedServices([...selectedServices, entry.name]);
+                                                            }
+                                                        }
                                                     }}
                                                 />
                                             ))}
@@ -747,8 +806,20 @@ export default function ReportsPage() {
                                             key={index}
                                             className="transition-colors hover:bg-slate-50 cursor-pointer group"
                                             onClick={() => {
-                                                if (groupBy === 'vendor') setSelectedVendor(row.name);
-                                                if (groupBy === 'service') setSelectedService(row.name);
+                                                if (groupBy === 'vendor') {
+                                                    if (selectedVendors.includes(row.name)) {
+                                                        setSelectedVendors(selectedVendors.filter(v => v !== row.name));
+                                                    } else {
+                                                        setSelectedVendors([...selectedVendors, row.name]);
+                                                    }
+                                                }
+                                                if (groupBy === 'service') {
+                                                    if (selectedServices.includes(row.name)) {
+                                                        setSelectedServices(selectedServices.filter(s => s !== row.name));
+                                                    } else {
+                                                        setSelectedServices([...selectedServices, row.name]);
+                                                    }
+                                                }
                                             }}
                                             title="Click to filter by this item"
                                         >

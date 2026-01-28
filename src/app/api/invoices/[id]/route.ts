@@ -26,3 +26,22 @@ export async function PUT(
         return NextResponse.json({ error: 'Failed to update invoice' }, { status: 500 });
     }
 }
+
+/**
+ * DELETE /api/invoices/[id]
+ * Deletes an invoice.
+ */
+export async function DELETE(
+    _request: Request,
+    { params }: { params: { id: string } }
+) {
+    const { response } = await requireAuth();
+    if (response) return response;
+
+    try {
+        await db.invoices.delete(params.id);
+        return NextResponse.json({ success: true });
+    } catch {
+        return NextResponse.json({ error: 'Failed to delete invoice' }, { status: 500 });
+    }
+}

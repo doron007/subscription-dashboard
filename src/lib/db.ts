@@ -611,8 +611,8 @@ export const db = {
                         // Check if one contains the other (handles slight variations)
                         return existingNormalized === normalizedNewName ||
                             (existingNormalized.length > 10 && normalizedNewName.length > 10 &&
-                             (existingNormalized.includes(normalizedNewName) ||
-                              normalizedNewName.includes(existingNormalized)));
+                                (existingNormalized.includes(normalizedNewName) ||
+                                    normalizedNewName.includes(existingNormalized)));
                     });
                 }
             }
@@ -1237,6 +1237,36 @@ export const db = {
                 currency: data.currency,
                 status: data.status,
                 fileUrl: data.file_url
+            };
+        },
+
+        delete: async (id: string): Promise<{ success: boolean; deletedCounts: { lineItems: number } }> => {
+            // 1. Delete associated line items
+            const { count: lineItemCount } = await supabase
+                .from('sub_invoice_line_items')
+                .select('*', { count: 'exact', head: true })
+                .eq('invoice_id', id);
+
+            const { error: lineItemsError } = await supabase
+                .from('sub_invoice_line_items')
+                .delete()
+                .eq('invoice_id', id);
+
+            if (lineItemsError) throw lineItemsError;
+
+            // 2. Delete the invoice
+            const { error: invoiceError } = await supabase
+                .from('sub_invoices')
+                .delete()
+                .eq('id', id);
+
+            if (invoiceError) throw invoiceError;
+
+            return {
+                success: true,
+                deletedCounts: {
+                    lineItems: lineItemCount || 0
+                }
             };
         },
 

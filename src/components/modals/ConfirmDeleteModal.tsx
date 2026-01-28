@@ -5,7 +5,7 @@ interface ConfirmDeleteModalProps {
     onClose: () => void;
     onConfirm: () => void;
     entityName: string;
-    entityType: 'Vendor' | 'Service' | 'Line Item' | 'Subscription';
+    entityType: 'Vendor' | 'Service' | 'Line Item' | 'Subscription' | 'Invoice';
     cascadeImpact?: {
         subscriptions?: number;
         services?: number;
