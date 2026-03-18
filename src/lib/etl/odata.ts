@@ -8,10 +8,18 @@ import { parseSAPAmount, parseSAPDate, parseODataEpoch, parseRawAmount } from '.
  * Accepts credentials as parameter (no process.env dependency).
  */
 export async function fetchODataLive(credentials: ODataCredentials): Promise<SAPRow[]> {
-  const { baseUrl, username, password } = credentials;
+  const { baseUrl, username, password, year } = credentials;
 
-  // Build OData query URL for GL Account data
-  const url = `${baseUrl}`;
+  // Build OData query URL with parameters in code (avoids $ escaping issues in .env)
+  const selectFields = 'TBUS_PART_UUID,CNOTE_IT,COFF_BUSPARTNER,COFF_OPD_F_ID,COPDREF_F_ID,CPOSTING_DATE,KCCREDIT_CURRCOMP,KCDEBIT_CURRCOMP';
+  const filterYear = year || new Date().getFullYear();
+  const dateFilter = `CPOSTING_DATE ge datetime'${filterYear}-01-01T00:00:00'`;
+
+  // If baseUrl already has query params, use it as-is; otherwise build the query
+  const hasParams = baseUrl.includes('?');
+  const url = hasParams
+    ? baseUrl
+    : `${baseUrl}?$select=${selectFields}&$filter=${encodeURIComponent(dateFilter)}&$top=10000000&$format=json`;
 
   const authHeader = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
 

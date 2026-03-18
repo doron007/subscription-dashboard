@@ -13,7 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import type { SapImportAnalysis, ETLInvoice, SupabaseInvoice } from '@/lib/etl/types';
+import type { SapImportAnalysis, ETLInvoice, SupabaseInvoice, InvoiceOverrides } from '@/lib/etl/types';
 import { SapInvoiceRow } from './SapInvoiceRow';
 
 type ResultTab = 'matched' | 'new' | 'supabase-only';
@@ -46,6 +46,17 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
   // Selection state per tab
   const [selectedMatched, setSelectedMatched] = useState<Set<string>>(new Set());
   const [selectedNew, setSelectedNew] = useState<Set<string>>(new Set());
+
+  // Override state for matched invoices
+  const [overrides, setOverrides] = useState<Map<string, InvoiceOverrides>>(new Map());
+
+  const handleOverride = useCallback((groupKey: string, newOverrides: InvoiceOverrides) => {
+    setOverrides(prev => {
+      const next = new Map(prev);
+      next.set(groupKey, newOverrides);
+      return next;
+    });
+  }, []);
 
   // Import state
   const [isImporting, setIsImporting] = useState(false);
@@ -216,10 +227,27 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
       selectedNew.has(inv.groupKey)
     );
 
-    const allItems = [
-      ...matchedToImport.map((m) => ({ type: 'update' as const, etl: m.etl, supabaseId: m.supabase.id })),
-      ...newToImport.map((inv) => ({ type: 'create' as const, etl: inv, supabaseId: null })),
-    ];
+    // Build actions respecting overrides
+    const allItems: { type: 'create' | 'update'; etl: ETLInvoice; supabaseId: string | null; overrides?: { billingMonth?: string; amountOverride?: number } }[] = [];
+
+    for (const m of matchedToImport) {
+      const ov = overrides.get(m.etl.groupKey);
+      if (ov?.importAction === 'SKIP') continue;
+      const actionType = ov?.importAction === 'CREATE' ? 'create' as const : 'update' as const;
+      allItems.push({
+        type: actionType,
+        etl: m.etl,
+        supabaseId: actionType === 'update' ? m.supabase.id : null,
+        overrides: (ov?.billingMonth || ov?.amountOverride) ? {
+          billingMonth: ov.billingMonth,
+          amountOverride: ov.amountOverride,
+        } : undefined,
+      });
+    }
+
+    for (const inv of newToImport) {
+      allItems.push({ type: 'create', etl: inv, supabaseId: null });
+    }
 
     const totalBatches = Math.ceil(allItems.length / BATCH_SIZE);
     setImportProgress({ current: 0, total: allItems.length });
@@ -232,10 +260,17 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
       for (let i = 0; i < totalBatches; i++) {
         const batch = allItems.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
 
+        const actions = batch.map(item => ({
+          type: item.type.toUpperCase() as 'CREATE' | 'UPDATE',
+          etlInvoice: item.etl,
+          targetInvoiceId: item.supabaseId || undefined,
+          overrides: item.overrides,
+        }));
+
         const response = await fetch('/api/sap/execute-batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: batch }),
+          body: JSON.stringify({ actions, batchIndex: i, totalBatches }),
         });
 
         if (!response.ok) {
@@ -244,9 +279,9 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
         }
 
         const result = await response.json();
-        created += result.created || 0;
-        updated += result.updated || 0;
-        errors += result.errors || 0;
+        created += result.created?.invoices || 0;
+        updated += result.updated?.invoices || 0;
+        errors += result.errors?.length || 0;
 
         setImportProgress({
           current: Math.min((i + 1) * BATCH_SIZE, allItems.length),
@@ -397,6 +432,8 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
               amountDiff={m.amountDiff}
               isSelected={selectedMatched.has(m.etl.groupKey)}
               onToggleSelect={() => toggleSelectItem(m.etl.groupKey)}
+              overrides={overrides.get(m.etl.groupKey)}
+              onOverride={handleOverride}
             />
           ))}
 
@@ -481,16 +518,22 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
           <div className="text-sm text-slate-600">
             <span className="font-semibold text-slate-800">{totalSelected}</span>{' '}
             invoice{totalSelected !== 1 ? 's' : ''} selected
-            {selectedMatched.size > 0 && (
-              <span className="text-slate-400 ml-2">
-                ({selectedMatched.size} updates)
-              </span>
-            )}
-            {selectedNew.size > 0 && (
-              <span className="text-slate-400 ml-2">
-                ({selectedNew.size} new)
-              </span>
-            )}
+            {(() => {
+              let creates = selectedNew.size;
+              let updates = 0;
+              selectedMatched.forEach(key => {
+                const ov = overrides.get(key);
+                if (ov?.importAction === 'SKIP') return;
+                if (ov?.importAction === 'CREATE') creates++;
+                else updates++;
+              });
+              return (
+                <>
+                  {updates > 0 && <span className="text-slate-400 ml-2">({updates} updates)</span>}
+                  {creates > 0 && <span className="text-slate-400 ml-2">({creates} new)</span>}
+                </>
+              );
+            })()}
           </div>
 
           {isImporting ? (
@@ -557,15 +600,26 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
               <div>
                 <h3 className="font-bold text-slate-900 text-lg">Confirm Import</h3>
                 <p className="text-slate-500 mt-1 text-sm">
-                  This will create{' '}
-                  <span className="font-semibold text-slate-800">
-                    {selectedNew.size} new invoices
-                  </span>{' '}
-                  and update{' '}
-                  <span className="font-semibold text-slate-800">
-                    {selectedMatched.size} existing invoices
-                  </span>
-                  . Proceed?
+                  {(() => {
+                    let creates = selectedNew.size;
+                    let updates = 0;
+                    let skips = 0;
+                    selectedMatched.forEach(key => {
+                      const ov = overrides.get(key);
+                      if (ov?.importAction === 'SKIP') skips++;
+                      else if (ov?.importAction === 'CREATE') creates++;
+                      else updates++;
+                    });
+                    return (
+                      <>
+                        This will create{' '}
+                        <span className="font-semibold text-slate-800">{creates} new</span>
+                        {updates > 0 && <>, update <span className="font-semibold text-slate-800">{updates} existing</span></>}
+                        {skips > 0 && <>, skip <span className="font-semibold text-slate-400">{skips}</span></>}
+                        . Proceed?
+                      </>
+                    );
+                  })()}
                 </p>
               </div>
             </div>

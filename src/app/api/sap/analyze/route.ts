@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     const fetchStart = Date.now();
     let sapRows;
     try {
-      sapRows = await fetchODataLive({ baseUrl, username, password });
+      sapRows = await fetchODataLive({ baseUrl, username, password, year: dataYear });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return NextResponse.json(
@@ -85,7 +85,8 @@ export async function POST(request: Request) {
     const etlInvoices = reconstructInvoices(classified);
 
     // --- Step 5: Query Supabase invoices for the target year ---
-    const yearStart = `${dataYear}-01-01`;
+    // Include prior year Q4 to catch cross-year matches (e.g., Dec 2025 service posted in Jan 2026)
+    const yearStart = `${dataYear - 1}-10-01`;
     const yearEnd = `${dataYear}-12-31`;
 
     const { data: invoiceRows, error: invError } = await supabase
@@ -97,7 +98,7 @@ export async function POST(request: Request) {
         total_amount,
         vendor_id,
         sub_vendors!inner ( name ),
-        sub_invoice_line_items ( id )
+        sub_invoice_line_items ( id, description, quantity, unit_price, total_amount, period_start, period_end )
       `)
       .gte('invoice_date', yearStart)
       .lte('invoice_date', yearEnd);
@@ -106,17 +107,27 @@ export async function POST(request: Request) {
       throw new Error(`Failed to query invoices: ${invError.message}`);
     }
 
-    const supabaseInvoices: SupabaseInvoice[] = (invoiceRows || []).map((row: any) => ({
-      id: row.id,
-      vendor_name: row.sub_vendors?.name ?? '',
-      vendor_id: row.vendor_id,
-      invoice_number: row.invoice_number,
-      invoice_date: row.invoice_date,
-      total_amount: row.total_amount,
-      line_item_count: Array.isArray(row.sub_invoice_line_items)
-        ? row.sub_invoice_line_items.length
-        : 0,
-    }));
+    const supabaseInvoices: SupabaseInvoice[] = (invoiceRows || []).map((row: any) => {
+      const rawLineItems = Array.isArray(row.sub_invoice_line_items) ? row.sub_invoice_line_items : [];
+      return {
+        id: row.id,
+        vendor_name: row.sub_vendors?.name ?? '',
+        vendor_id: row.vendor_id,
+        invoice_number: row.invoice_number,
+        invoice_date: row.invoice_date,
+        total_amount: row.total_amount,
+        line_item_count: rawLineItems.length,
+        lineItems: rawLineItems.map((li: any) => ({
+          id: li.id,
+          description: li.description || '',
+          quantity: li.quantity,
+          unit_price: li.unit_price,
+          total_amount: li.total_amount || 0,
+          period_start: li.period_start,
+          period_end: li.period_end,
+        })),
+      };
+    });
 
     // --- Step 6: Match ETL invoices against Supabase ---
     const matchResults = matchInvoices(etlInvoices, supabaseInvoices);

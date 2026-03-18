@@ -10,6 +10,10 @@ interface SapBatchAction {
   type: 'CREATE' | 'UPDATE';
   etlInvoice: ETLInvoice;
   targetInvoiceId?: string; // required for UPDATE
+  overrides?: {
+    billingMonth?: string;
+    amountOverride?: number;
+  };
 }
 
 interface SapBatchRequest {
@@ -157,6 +161,11 @@ export async function POST(request: Request) {
           subscriptionCache.set(vendor.id, subscription);
         }
 
+        // ── Resolve overrides ─────────────────────────────────────────
+        const effectiveBillingMonth = action.overrides?.billingMonth || etlInvoice.billingMonth;
+        const effectiveAmount = action.overrides?.amountOverride ??
+          (etlInvoice.computedAmount !== etlInvoice.rawAmount ? etlInvoice.computedAmount : etlInvoice.rawAmount);
+
         // ── Execute action ──────────────────────────────────────────────
         if (action.type === 'CREATE') {
           // Insert new invoice
@@ -166,10 +175,8 @@ export async function POST(request: Request) {
               vendor_id: vendor.id,
               subscription_id: subscription.id,
               invoice_number: `SAP-${etlInvoice.groupKey}`,
-              invoice_date: etlInvoice.billingMonth,
-              total_amount: etlInvoice.computedAmount !== etlInvoice.rawAmount
-                ? etlInvoice.computedAmount
-                : etlInvoice.rawAmount,
+              invoice_date: effectiveBillingMonth,
+              total_amount: effectiveAmount,
               currency: 'USD',
               status: 'Paid',
             })
@@ -206,16 +213,12 @@ export async function POST(request: Request) {
             throw new Error('UPDATE action requires targetInvoiceId');
           }
 
-          const invoiceAmount = etlInvoice.computedAmount !== etlInvoice.rawAmount
-            ? etlInvoice.computedAmount
-            : etlInvoice.rawAmount;
-
           // Update existing invoice
           const { error: updErr } = await supabase
             .from('sub_invoices')
             .update({
-              total_amount: invoiceAmount,
-              invoice_date: etlInvoice.billingMonth,
+              total_amount: effectiveAmount,
+              invoice_date: effectiveBillingMonth,
             })
             .eq('id', action.targetInvoiceId);
 

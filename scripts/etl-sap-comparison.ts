@@ -97,6 +97,7 @@ async function querySupabase(): Promise<{
     invoice_date: inv.invoice_date,
     total_amount: parseFloat(inv.total_amount) || 0,
     line_item_count: inv.sub_invoice_line_items?.length || 0,
+    lineItems: [],
   }));
 
   // Aggregate vendor totals

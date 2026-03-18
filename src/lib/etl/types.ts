@@ -39,6 +39,16 @@ export interface ETLInvoice {
   lineItems: ClassifiedRow[];
 }
 
+export interface SupabaseLineItem {
+  id: string;
+  description: string;
+  quantity: number | null;
+  unit_price: number | null;
+  total_amount: number;
+  period_start: string | null;
+  period_end: string | null;
+}
+
 export interface SupabaseInvoice {
   id: string;
   vendor_name: string;
@@ -47,6 +57,13 @@ export interface SupabaseInvoice {
   invoice_date: string;
   total_amount: number;
   line_item_count: number;
+  lineItems: SupabaseLineItem[];
+}
+
+export interface InvoiceOverrides {
+  billingMonth?: string;
+  importAction?: 'UPDATE' | 'CREATE' | 'SKIP';
+  amountOverride?: number;
 }
 
 export interface MatchResult {
@@ -76,4 +93,5 @@ export interface ODataCredentials {
   baseUrl: string;
   username: string;
   password: string;
+  year?: number;  // fiscal year for date filtering (default: current year)
 }
