@@ -42,3 +42,10 @@ next-env.d.ts
 
 # claude code
 .claude/
+
+# playwright MCP test artifacts
+.playwright-mcp/
+
+# sensitive data files
+*.csv
+!src/**/*.csv
