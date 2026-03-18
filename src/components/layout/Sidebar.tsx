@@ -1,6 +1,6 @@
 'use client';
 
-import { LayoutDashboard, CreditCard, PieChart, Settings, LogOut, Code2, Sparkles, Users } from 'lucide-react';
+import { LayoutDashboard, CreditCard, PieChart, Settings, LogOut, Code2, FileInput, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 import Link from 'next/link';
@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', href: '/', active: false },
     { icon: CreditCard, label: 'Subscriptions', href: '/subscriptions', active: false },
-    { icon: Sparkles, label: 'Shadow Detector', href: '/shadow-it', active: false },
+    { icon: FileInput, label: 'Import Center', href: '/import-center', active: false },
     { icon: PieChart, label: 'Reports', href: '/reports', active: false },
     { icon: Settings, label: 'Settings', href: '/settings', active: false },
 ];

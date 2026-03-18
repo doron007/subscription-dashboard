@@ -1,0 +1,178 @@
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { requireAuth } from '@/lib/api-auth';
+import {
+  fetchODataLive,
+  classifyRows,
+  reconstructInvoices,
+  matchInvoices,
+  VendorMatcher,
+  type SupabaseInvoice,
+  type SapImportAnalysis,
+} from '@/lib/etl';
+
+/**
+ * POST /api/sap/analyze
+ *
+ * Read-only analysis route. Fetches SAP GL data via OData, runs the ETL
+ * pipeline (classify -> reconstruct -> match), and returns a comparison
+ * against the current Supabase invoices. Zero writes.
+ */
+export async function POST(request: Request) {
+  const { response } = await requireAuth();
+  if (response) return response;
+
+  try {
+    const body = await request.json().catch(() => ({}));
+    const dataYear = body.year ?? new Date().getFullYear();
+
+    // --- Validate SAP OData credentials are configured ---
+    const baseUrl = process.env.SAP_ODATA_BASE_URL;
+    const username = process.env.SAP_ODATA_USERNAME;
+    const password = process.env.SAP_ODATA_PASSWORD;
+
+    if (!baseUrl || !username || !password) {
+      return NextResponse.json(
+        { error: 'SAP OData credentials are not configured on the server.' },
+        { status: 500 }
+      );
+    }
+
+    // --- Service-role Supabase client (bypasses RLS for read queries) ---
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // --- Step 1: Build VendorMatcher from all known vendor names ---
+    const { data: vendors, error: vendorError } = await supabase
+      .from('sub_vendors')
+      .select('name');
+
+    if (vendorError) {
+      throw new Error(`Failed to query vendors: ${vendorError.message}`);
+    }
+
+    const matcher = new VendorMatcher();
+    matcher.build((vendors || []).map((v: { name: string }) => v.name));
+
+    // --- Step 2: Fetch SAP OData GL rows ---
+    const fetchStart = Date.now();
+    let sapRows;
+    try {
+      sapRows = await fetchODataLive({ baseUrl, username, password });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json(
+        { error: `SAP OData connection failed: ${msg}` },
+        { status: 502 }
+      );
+    }
+    const fetchDurationMs = Date.now() - fetchStart;
+
+    // --- Step 3: Classify rows ---
+    // classifyRows uses module-level vendor maps (BP_TO_SUPABASE, SB/DESC patterns).
+    // It does NOT take a VendorMatcher parameter.
+    const classified = classifyRows(sapRows);
+
+    // Build classification counts
+    const classification: Record<string, number> = {};
+    for (const row of classified) {
+      classification[row.classification] = (classification[row.classification] || 0) + 1;
+    }
+
+    // --- Step 4: Reconstruct invoices ---
+    const etlInvoices = reconstructInvoices(classified);
+
+    // --- Step 5: Query Supabase invoices for the target year ---
+    const yearStart = `${dataYear}-01-01`;
+    const yearEnd = `${dataYear}-12-31`;
+
+    const { data: invoiceRows, error: invError } = await supabase
+      .from('sub_invoices')
+      .select(`
+        id,
+        invoice_number,
+        invoice_date,
+        total_amount,
+        vendor_id,
+        sub_vendors!inner ( name ),
+        sub_invoice_line_items ( id )
+      `)
+      .gte('invoice_date', yearStart)
+      .lte('invoice_date', yearEnd);
+
+    if (invError) {
+      throw new Error(`Failed to query invoices: ${invError.message}`);
+    }
+
+    const supabaseInvoices: SupabaseInvoice[] = (invoiceRows || []).map((row: any) => ({
+      id: row.id,
+      vendor_name: row.sub_vendors?.name ?? '',
+      vendor_id: row.vendor_id,
+      invoice_number: row.invoice_number,
+      invoice_date: row.invoice_date,
+      total_amount: row.total_amount,
+      line_item_count: Array.isArray(row.sub_invoice_line_items)
+        ? row.sub_invoice_line_items.length
+        : 0,
+    }));
+
+    // --- Step 6: Match ETL invoices against Supabase ---
+    const matchResults = matchInvoices(etlInvoices, supabaseInvoices);
+
+    // Separate into buckets
+    const matched: SapImportAnalysis['matched'] = [];
+    const newInvoices: SapImportAnalysis['newInvoices'] = [];
+    const matchedSupabaseIds = new Set<string>();
+
+    for (const mr of matchResults) {
+      if (mr.supabaseInvoice && mr.matchType !== 'NONE') {
+        matched.push({
+          etl: mr.etlInvoice,
+          supabase: mr.supabaseInvoice,
+          matchType: mr.matchType as 'EXACT' | 'CLOSE' | 'MONTH_MATCH',
+          amountDiff: mr.amountDiff,
+        });
+        matchedSupabaseIds.add(mr.supabaseInvoice.id);
+      } else {
+        newInvoices.push(mr.etlInvoice);
+      }
+    }
+
+    const supabaseOnly = supabaseInvoices.filter(
+      (si) => !matchedSupabaseIds.has(si.id)
+    );
+
+    // --- Build warnings ---
+    const warnings: string[] = [];
+    if (sapRows.length === 0) {
+      warnings.push('No rows returned from SAP OData. Check credentials and endpoint URL.');
+    }
+    if (etlInvoices.length === 0 && sapRows.length > 0) {
+      warnings.push('SAP returned rows but no invoices could be reconstructed. Check vendor mappings.');
+    }
+
+    const analysis: SapImportAnalysis = {
+      sapMeta: {
+        totalGLRows: sapRows.length,
+        classification,
+        etlInvoiceCount: etlInvoices.length,
+        dataYear,
+        fetchDurationMs,
+      },
+      matched,
+      newInvoices,
+      supabaseOnly,
+      warnings,
+    };
+
+    return NextResponse.json(analysis);
+  } catch (error) {
+    console.error('SAP analyze error:', error);
+    return NextResponse.json(
+      { error: 'SAP analysis failed', details: (error as Error).message },
+      { status: 500 }
+    );
+  }
+}

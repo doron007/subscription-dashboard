@@ -4,6 +4,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Settings, Shield, User, Bell, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import Link from 'next/link';
+import { BackupSection } from '@/components/settings/BackupSection';
 
 export default function SettingsPage() {
     const { isAdmin } = useAuth();
@@ -49,6 +50,8 @@ export default function SettingsPage() {
                             <button className="mt-3 text-sm font-medium text-slate-900 hover:text-indigo-600">View Keys &rarr;</button>
                         </div>
                     </div>
+
+                    <BackupSection />
                 </div>
 
                 {/* Admin Section */}

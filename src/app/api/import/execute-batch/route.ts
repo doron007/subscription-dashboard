@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
+import { ensureRecentBackup } from '@/lib/backup';
 import { parseImportCSV, extractPeriodFromDescription, extractCleanServiceName } from '@/lib/import/parseCSV';
 import { analyzeCSVFormat, transformToStandard } from '@/lib/import/smartMapper';
 import type {
@@ -69,6 +70,15 @@ export async function POST(request: Request) {
                 { error: 'Invalid CSV data' },
                 { status: 400 }
             );
+        }
+
+        // Auto-backup on first batch
+        if (batchIndex === 0) {
+            try {
+                await ensureRecentBackup();
+            } catch (err) {
+                console.warn('Auto-backup check failed (non-fatal):', err);
+            }
         }
 
         // Get headers and detect format

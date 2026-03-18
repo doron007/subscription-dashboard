@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
+import { ensureRecentBackup } from '@/lib/backup';
 import { parseImportCSV, extractPeriodFromDescription, extractCleanServiceName } from '@/lib/import/parseCSV';
 import { analyzeCSVFormat, transformToStandard } from '@/lib/import/smartMapper';
 import type {
@@ -52,6 +53,13 @@ export async function POST(request: Request) {
     if (response) return response;
 
     try {
+        // Auto-backup before executing import (non-batched route has no batchIndex)
+        try {
+            await ensureRecentBackup();
+        } catch (err) {
+            console.warn('Auto-backup check failed (non-fatal):', err);
+        }
+
         const body = await request.json();
         const { csvData, decisions, globalStrategy = 'csv_wins' } = body as {
             csvData: any[];
