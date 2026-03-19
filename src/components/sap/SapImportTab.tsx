@@ -30,12 +30,15 @@ const PHASE_MESSAGES = [
   'Preparing results...',
 ];
 
+type ResultTab = 'matched' | 'new' | 'supabase-only';
+
 export function SapImportTab() {
   const [state, setState] = useState<TabState>('idle');
   const [year, setYear] = useState(currentYear);
   const [analysis, setAnalysis] = useState<SapImportAnalysis | null>(null);
   const [error, setError] = useState<string>('');
   const [phaseIndex, setPhaseIndex] = useState(0);
+  const [activeResultTab, setActiveResultTab] = useState<ResultTab>('matched');
 
   const fetchSapData = useCallback(async () => {
     setState('fetching');
@@ -203,7 +206,7 @@ export function SapImportTab() {
       {/* Done state - summary + results */}
       {state === 'done' && analysis && (
         <>
-          {/* Summary cards */}
+          {/* Summary cards — clickable to switch result tabs */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
               <div className="flex items-center gap-2 text-slate-500 mb-1">
@@ -218,7 +221,12 @@ export function SapImportTab() {
               </div>
             </div>
 
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-green-200">
+            <button
+              onClick={() => setActiveResultTab('matched')}
+              className={`bg-white p-4 rounded-xl shadow-sm border-2 text-left transition-all hover:shadow-md ${
+                activeResultTab === 'matched' ? 'border-green-500 ring-1 ring-green-200' : 'border-slate-200 hover:border-green-300'
+              }`}
+            >
               <div className="flex items-center gap-2 text-green-600 mb-1">
                 <CheckCircle2 className="w-4 h-4" />
                 <span className="text-xs font-medium">Matched</span>
@@ -229,12 +237,17 @@ export function SapImportTab() {
               <div className="text-xs text-slate-500 mt-0.5">
                 existing invoices found
               </div>
-            </div>
+            </button>
 
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-teal-200">
+            <button
+              onClick={() => setActiveResultTab('new')}
+              className={`bg-white p-4 rounded-xl shadow-sm border-2 text-left transition-all hover:shadow-md ${
+                activeResultTab === 'new' ? 'border-teal-500 ring-1 ring-teal-200' : 'border-slate-200 hover:border-teal-300'
+              }`}
+            >
               <div className="flex items-center gap-2 text-teal-600 mb-1">
                 <Plus className="w-4 h-4" />
-                <span className="text-xs font-medium">New</span>
+                <span className="text-xs font-medium">New Records</span>
               </div>
               <div className="text-2xl font-bold text-slate-800">
                 {analysis.newInvoices.length}
@@ -242,12 +255,17 @@ export function SapImportTab() {
               <div className="text-xs text-slate-500 mt-0.5">
                 not yet in dashboard
               </div>
-            </div>
+            </button>
 
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <button
+              onClick={() => setActiveResultTab('supabase-only')}
+              className={`bg-white p-4 rounded-xl shadow-sm border-2 text-left transition-all hover:shadow-md ${
+                activeResultTab === 'supabase-only' ? 'border-slate-500 ring-1 ring-slate-200' : 'border-slate-200 hover:border-slate-300'
+              }`}
+            >
               <div className="flex items-center gap-2 text-slate-500 mb-1">
                 <Database className="w-4 h-4" />
-                <span className="text-xs font-medium">Supabase Only</span>
+                <span className="text-xs font-medium">DB Only</span>
               </div>
               <div className="text-2xl font-bold text-slate-800">
                 {analysis.supabaseOnly.length}
@@ -255,7 +273,7 @@ export function SapImportTab() {
               <div className="text-xs text-slate-500 mt-0.5">
                 not found in SAP
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Warnings */}
@@ -302,6 +320,8 @@ export function SapImportTab() {
             onAnalysisUpdate={(updated) => {
               setAnalysis(prev => prev ? { ...prev, ...updated } : prev);
             }}
+            activeTabOverride={activeResultTab}
+            onTabChange={setActiveResultTab}
           />
         </>
       )}

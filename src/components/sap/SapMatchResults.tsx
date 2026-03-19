@@ -27,6 +27,8 @@ interface SapMatchResultsProps {
   analysis: SapImportAnalysis;
   onRefetch: () => void;
   onAnalysisUpdate?: (updated: Partial<SapImportAnalysis>) => void;
+  activeTabOverride?: ResultTab;
+  onTabChange?: (tab: ResultTab) => void;
 }
 
 function formatCurrency(amount: number): string {
@@ -36,8 +38,13 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate }: SapMatchResultsProps) {
-  const [activeTab, setActiveTab] = useState<ResultTab>('matched');
+export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeTabOverride, onTabChange }: SapMatchResultsProps) {
+  const [internalTab, setInternalTab] = useState<ResultTab>('matched');
+  const activeTab = activeTabOverride ?? internalTab;
+  const setActiveTab = (tab: ResultTab) => {
+    setInternalTab(tab);
+    onTabChange?.(tab);
+  };
   const [searchQuery, setSearchQuery] = useState('');
   const [matchTypeFilter, setMatchTypeFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<SortField>('vendor');
@@ -365,39 +372,41 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate }: SapMa
 
   return (
     <div className="space-y-4">
-      {/* Result sub-tabs */}
-      <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-        <button
-          onClick={() => { setActiveTab('matched'); resetPage(); }}
-          className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'matched'
-              ? 'bg-white text-slate-900 shadow-sm'
-              : 'text-slate-600 hover:text-slate-800'
-          }`}
-        >
-          Matched ({analysis.matched.length})
-        </button>
-        <button
-          onClick={() => { setActiveTab('new'); resetPage(); }}
-          className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'new'
-              ? 'bg-white text-slate-900 shadow-sm'
-              : 'text-slate-600 hover:text-slate-800'
-          }`}
-        >
-          New Records ({analysis.newInvoices.length})
-        </button>
-        <button
-          onClick={() => { setActiveTab('supabase-only'); resetPage(); }}
-          className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'supabase-only'
-              ? 'bg-white text-slate-900 shadow-sm'
-              : 'text-slate-600 hover:text-slate-800'
-          }`}
-        >
-          DB Only ({analysis.supabaseOnly.length})
-        </button>
-      </div>
+      {/* Result sub-tabs — only show when not controlled by parent cards */}
+      {!activeTabOverride && (
+        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+          <button
+            onClick={() => { setActiveTab('matched'); resetPage(); }}
+            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'matched'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            Matched ({analysis.matched.length})
+          </button>
+          <button
+            onClick={() => { setActiveTab('new'); resetPage(); }}
+            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'new'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            New Records ({analysis.newInvoices.length})
+          </button>
+          <button
+            onClick={() => { setActiveTab('supabase-only'); resetPage(); }}
+            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'supabase-only'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            DB Only ({analysis.supabaseOnly.length})
+          </button>
+        </div>
+      )}
 
       {/* Rematching indicator */}
       {isRematching && (
