@@ -158,8 +158,10 @@ export async function POST(request: Request) {
       }
     }
 
+    // Only show DB-only invoices from the target year (not Q4 prior year used for cross-year matching)
+    const yearPrefix = `${dataYear}-`;
     const supabaseOnly = supabaseInvoices.filter(
-      (si) => !matchedSupabaseIds.has(si.id)
+      (si) => !matchedSupabaseIds.has(si.id) && si.invoice_date >= yearPrefix
     );
 
     // --- Build warnings ---

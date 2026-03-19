@@ -95,7 +95,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const supabaseOnly = supabaseInvoices.filter(si => !matchedSupabaseIds.has(si.id));
+    const yearPrefix = `${dataYear || 2026}-`;
+    const supabaseOnly = supabaseInvoices.filter(si => !matchedSupabaseIds.has(si.id) && si.invoice_date >= yearPrefix);
 
     return NextResponse.json({ matched, newInvoices, supabaseOnly });
   } catch (error) {
