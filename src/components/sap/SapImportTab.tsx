@@ -100,41 +100,20 @@ export function SapImportTab() {
                 <Database className="w-8 h-8 text-teal-600" />
               </div>
               <h3 className="text-xl font-bold text-slate-900 mb-2">
-                Fetch SAP GL Data
+                SAP GL Import
               </h3>
               <p className="text-slate-500 max-w-sm mb-6">
-                Select a fiscal year and fetch journal entries from SAP. The ETL pipeline
+                Fetch year-to-date journal entries from SAP. The ETL pipeline
                 will classify, group, and match invoices automatically.
               </p>
 
               <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <label
-                    htmlFor="sap-year"
-                    className="text-sm font-medium text-slate-700"
-                  >
-                    Fiscal Year:
-                  </label>
-                  <select
-                    id="sap-year"
-                    value={year}
-                    onChange={(e) => setYear(Number(e.target.value))}
-                    className="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                  >
-                    {yearOptions.map((y) => (
-                      <option key={y} value={y}>
-                        {y}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
                 <button
                   onClick={fetchSapData}
                   className="bg-teal-600 hover:bg-teal-700 text-white font-medium px-6 py-2 rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Database className="w-4 h-4" />
-                  Fetch from SAP
+                  Fetch YTD from SAP
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -152,7 +131,7 @@ export function SapImportTab() {
               {PHASE_MESSAGES[phaseIndex]}
             </h3>
             <p className="text-slate-500 mt-2 text-sm">
-              Fetching {year} data. This may take a minute for large datasets.
+              Fetching year-to-date data. This may take a minute for large datasets.
             </p>
 
             {/* Phase indicators */}
@@ -302,7 +281,7 @@ export function SapImportTab() {
           <div className="flex items-center justify-between">
             <p className="text-xs text-slate-400">
               Fetched in {(analysis.sapMeta.fetchDurationMs / 1000).toFixed(1)}s &bull;{' '}
-              {analysis.sapMeta.dataYear} fiscal year
+              {analysis.sapMeta.dataYear} year-to-date
             </p>
             <button
               onClick={handleRefetch}
