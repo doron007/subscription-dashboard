@@ -33,13 +33,13 @@ export default function SubscriptionsPage() {
             <div className="space-y-8">
                 <div className="flex items-center justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">All Subscriptions</h1>
-                        <p className="text-slate-500 mt-1">View and manage all your software assets.</p>
+                        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Vendor Directory</h1>
+                        <p className="text-slate-500 mt-1">View and manage all your vendors and agreements.</p>
                     </div>
                     <ActionsBar />
                 </div>
 
-                <SubscriptionTable subscriptions={subscriptions} enableSearch={true} title="Subscriptions Directory" onRefresh={loadData} />
+                <SubscriptionTable subscriptions={subscriptions} enableSearch={true} title="Vendor Directory" onRefresh={loadData} />
             </div>
         </DashboardLayout>
     );
