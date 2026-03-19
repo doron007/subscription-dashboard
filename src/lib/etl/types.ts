@@ -69,7 +69,8 @@ export interface InvoiceOverrides {
 export interface MatchResult {
   etlInvoice: ETLInvoice;
   supabaseInvoice: SupabaseInvoice | null;
-  matchType: 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'NONE';
+  supabaseInvoiceGroup?: SupabaseInvoice[]; // for MONTHLY_TOTAL: all invoices in the group
+  matchType: 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'MONTHLY_TOTAL' | 'NONE';
   amountDiff: number;
 }
 
@@ -83,7 +84,7 @@ export interface SapImportAnalysis {
     dataYear: number;
     fetchDurationMs: number;
   };
-  matched: { etl: ETLInvoice; supabase: SupabaseInvoice; matchType: 'EXACT' | 'CLOSE' | 'MONTH_MATCH'; amountDiff: number }[];
+  matched: { etl: ETLInvoice; supabase: SupabaseInvoice; supabaseGroup?: SupabaseInvoice[]; matchType: 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'MONTHLY_TOTAL'; amountDiff: number }[];
   newInvoices: ETLInvoice[];
   supabaseOnly: SupabaseInvoice[];
   warnings: string[];

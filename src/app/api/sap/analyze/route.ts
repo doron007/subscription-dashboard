@@ -71,9 +71,9 @@ export async function POST(request: Request) {
     const fetchDurationMs = Date.now() - fetchStart;
 
     // --- Step 3: Classify rows ---
-    // classifyRows uses module-level vendor maps (BP_TO_SUPABASE, SB/DESC patterns).
-    // It does NOT take a VendorMatcher parameter.
-    const classified = classifyRows(sapRows);
+    // classifyRows uses module-level vendor maps + optional fuzzy matcher for BPs
+    // not in the static BP_TO_SUPABASE map (e.g., AMAZON WEB SERVICES INC)
+    const classified = classifyRows(sapRows, matcher);
 
     // Build classification counts
     const classification: Record<string, number> = {};
@@ -139,12 +139,19 @@ export async function POST(request: Request) {
 
     for (const mr of matchResults) {
       if (mr.supabaseInvoice && mr.matchType !== 'NONE') {
-        matched.push({
+        const matchEntry: SapImportAnalysis['matched'][number] = {
           etl: mr.etlInvoice,
           supabase: mr.supabaseInvoice,
-          matchType: mr.matchType as 'EXACT' | 'CLOSE' | 'MONTH_MATCH',
+          matchType: mr.matchType as 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'MONTHLY_TOTAL',
           amountDiff: mr.amountDiff,
-        });
+        };
+        if (mr.supabaseInvoiceGroup) {
+          matchEntry.supabaseGroup = mr.supabaseInvoiceGroup;
+          for (const sub of mr.supabaseInvoiceGroup) {
+            matchedSupabaseIds.add(sub.id);
+          }
+        }
+        matched.push(matchEntry);
         matchedSupabaseIds.add(mr.supabaseInvoice.id);
       } else {
         newInvoices.push(mr.etlInvoice);

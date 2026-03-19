@@ -2,13 +2,14 @@
 
 import type { SAPRow, ClassifiedRow, RowClassification } from './types';
 import { getBillingMonth } from './parsers';
-import { BP_TO_SUPABASE, matchSBVendor, matchDescVendor } from './vendors';
+import { BP_TO_SUPABASE, matchSBVendor, matchDescVendor, VendorMatcher } from './vendors';
 
 /**
  * Classify SAP GL rows by type (vendor debit/credit, CC subscription, payroll, etc.)
  * and attempt to map each to a Supabase vendor name.
+ * @param matcher Optional VendorMatcher for fuzzy BP matching against known DB vendors
  */
-export function classifyRows(rows: SAPRow[]): ClassifiedRow[] {
+export function classifyRows(rows: SAPRow[], matcher?: VendorMatcher): ClassifiedRow[] {
   return rows.map(row => {
     const bp = row.businessPartner;
     const desc = row.description;
@@ -16,8 +17,8 @@ export function classifyRows(rows: SAPRow[]): ClassifiedRow[] {
     let supabaseVendor: string | null = null;
 
     if (bp !== 'Not assigned' && bp !== 'Not Assigned') {
-      // Assigned Business Partner
-      supabaseVendor = BP_TO_SUPABASE[bp] || null;
+      // Assigned Business Partner — explicit map first, then fuzzy match
+      supabaseVendor = BP_TO_SUPABASE[bp] || matcher?.fuzzyMatch(bp) || null;
 
       if (row.creditAmount > 0 && row.debitAmount === 0) {
         classification = 'VENDOR_CREDIT';
@@ -87,8 +88,23 @@ export function classifyRows(rows: SAPRow[]): ClassifiedRow[] {
  * Derive the billing month from SAP row context (description patterns, SB- prefix, etc.).
  * Returns an ISO first-of-month string like "2025-01-01".
  */
+// Vendors that always bill for the PRIOR month's service
+const PRIOR_MONTH_VENDORS = ['Amazon Web Services', 'Venti Exchange'];
+
+/**
+ * Shift a billing month back by 1 month for vendors that bill in arrears.
+ */
+function shiftMonthBack(billingMonth: string): string {
+  const d = new Date(billingMonth + 'T00:00:00');
+  d.setMonth(d.getMonth() - 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}-01`;
+}
+
 export function deriveBillingMonth(row: ClassifiedRow): string {
   const desc = row.description;
+  let derivedFromDescription = false;
 
   // Pattern 1: Date ranges in description like "11/16 - 12/01"
   const dateRangeMatch = desc.match(/(\d{1,2})\/(\d{1,2})\s*[-\u2013]\s*(\d{1,2})\/(\d{1,2})/);
@@ -97,10 +113,9 @@ export function deriveBillingMonth(row: ClassifiedRow): string {
     const postingYear = parseInt(row.postingDate.substring(0, 4)) || 2025;
     const postingMonth = parseInt(row.postingDate.substring(5, 7)) || 1;
     const serviceMonth = parseInt(m1);
-    // Fix year-crossover: if service month is far ahead of posting month,
-    // the service was in the prior year (e.g., Nov service posted in Jan)
     const year = (serviceMonth > postingMonth + 2) ? postingYear - 1 : postingYear;
     return `${year}-${m1.padStart(2, '0')}-01`;
+    // Description contains explicit service dates — no prior-month offset needed
   }
 
   // Pattern 2: Month name in description like "NOV2024", "JAN2025", "DEC2024"
@@ -122,7 +137,13 @@ export function deriveBillingMonth(row: ClassifiedRow): string {
     const monthNum = parseInt(month);
     if (monthNum >= 1 && monthNum <= 12) {
       const year = row.postingDate.substring(0, 4) || '2026';
-      return `${year}-${month}-01`;
+      let billingMonth = `${year}-${month}-01`;
+      // CC prefix dates reflect transaction date, not service period.
+      // For prior-month vendors, shift back.
+      if (PRIOR_MONTH_VENDORS.includes(row.supabaseVendor || '')) {
+        billingMonth = shiftMonthBack(billingMonth);
+      }
+      return billingMonth;
     }
   }
 
@@ -154,5 +175,10 @@ export function deriveBillingMonth(row: ClassifiedRow): string {
   }
 
   // Fallback: posting date's first-of-month
-  return getBillingMonth(row.postingDate);
+  let billingMonth = getBillingMonth(row.postingDate);
+  // For prior-month vendors using posting date fallback, shift back
+  if (PRIOR_MONTH_VENDORS.includes(row.supabaseVendor || '')) {
+    billingMonth = shiftMonthBack(billingMonth);
+  }
+  return billingMonth;
 }

@@ -7,7 +7,8 @@ import type { ETLInvoice, SupabaseInvoice, InvoiceOverrides } from '@/lib/etl/ty
 interface SapInvoiceRowProps {
   etlInvoice: ETLInvoice;
   supabaseInvoice?: SupabaseInvoice | null;
-  matchType?: 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'NONE';
+  supabaseGroup?: SupabaseInvoice[];  // for MONTHLY_TOTAL: all invoices in the group
+  matchType?: 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'MONTHLY_TOTAL' | 'NONE';
   amountDiff?: number;
   isNew?: boolean;
   isSelected: boolean;
@@ -28,6 +29,7 @@ function MatchBadge({ matchType }: { matchType: string }) {
     EXACT: { bg: 'bg-green-100', text: 'text-green-800', label: 'Exact' },
     CLOSE: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Close' },
     MONTH_MATCH: { bg: 'bg-orange-100', text: 'text-orange-800', label: 'Month' },
+    MONTHLY_TOTAL: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Monthly Total' },
     NONE: { bg: 'bg-red-100', text: 'text-red-800', label: 'No Match' },
     NEW: { bg: 'bg-teal-100', text: 'text-teal-800', label: 'New' },
   };
@@ -44,6 +46,7 @@ function MatchBadge({ matchType }: { matchType: string }) {
 export function SapInvoiceRow({
   etlInvoice,
   supabaseInvoice,
+  supabaseGroup,
   matchType,
   amountDiff,
   isNew = false,
@@ -147,8 +150,8 @@ export function SapInvoiceRow({
       {/* Expanded detail */}
       {expanded && (
         <div className="border-t border-slate-200">
-          {/* Override controls (for matched invoices) */}
-          {supabaseInvoice && !isNew && onOverride && (
+          {/* Override controls (for both matched and new records) */}
+          {onOverride && (
             <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex flex-wrap items-center gap-4 text-sm">
               <div className="flex items-center gap-2">
                 <label className="text-slate-600 font-medium">Import As:</label>
@@ -157,7 +160,7 @@ export function SapInvoiceRow({
                   onChange={(e) => handleOverride({ importAction: e.target.value as InvoiceOverrides['importAction'] })}
                   className="border border-slate-300 rounded px-2 py-1 text-sm bg-white focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
                 >
-                  <option value="UPDATE">Update Existing</option>
+                  {!isNew && <option value="UPDATE">Update Existing</option>}
                   <option value="CREATE">Create New</option>
                   <option value="SKIP">Skip</option>
                 </select>
@@ -176,6 +179,11 @@ export function SapInvoiceRow({
                   ))}
                 </select>
               </div>
+              {matchType === 'MONTHLY_TOTAL' && supabaseGroup && (
+                <div className="text-xs text-purple-700 bg-purple-50 px-2 py-1 rounded">
+                  This SAP charge covers {supabaseGroup.length} existing DB invoices totaling {formatCurrency(supabaseGroup.reduce((s, i) => s + i.total_amount, 0))}
+                </div>
+              )}
             </div>
           )}
 
@@ -246,7 +254,7 @@ export function SapInvoiceRow({
             )}
           </div>
 
-          {/* Supabase Line Items (collapsible, only for matched invoices) */}
+          {/* Database Line Items (collapsible, for matched invoices) */}
           {hasSubLineItems && (
             <div className="border-t border-slate-200 bg-blue-50/30">
               <button
@@ -254,53 +262,85 @@ export function SapInvoiceRow({
                 className="w-full px-4 py-2 flex items-center gap-2 text-sm font-medium text-blue-700 hover:bg-blue-50/50 transition-colors"
               >
                 {showSubDetail ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                In Supabase ({supabaseInvoice!.lineItems.length} line items)
+                In Database ({matchType === 'MONTHLY_TOTAL' && supabaseGroup
+                  ? `${supabaseGroup.length} invoices, ${supabaseGroup.reduce((s, i) => s + (i.lineItems?.length || 0), 0)} line items`
+                  : `${supabaseInvoice!.lineItems.length} line items`
+                })
               </button>
               {showSubDetail && (
                 <div className="px-2 pb-2">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-blue-200 bg-blue-100/30">
-                        <th className="py-1.5 px-3 text-left text-xs font-semibold text-blue-800">Description</th>
-                        <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-20">Qty</th>
-                        <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-24">Unit Price</th>
-                        <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-24">Total</th>
-                        <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-28">Period</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {supabaseInvoice!.lineItems.map((li) => (
-                        <tr key={li.id} className="border-b border-blue-100 text-sm hover:bg-white/50">
-                          <td className="py-1.5 px-3 text-slate-700">
-                            <div className="truncate max-w-md" title={li.description}>
-                              {li.description || '(no description)'}
-                            </div>
-                          </td>
-                          <td className="py-1.5 px-3 text-right text-slate-600">
-                            {li.quantity ?? '-'}
-                          </td>
-                          <td className="py-1.5 px-3 text-right text-slate-600">
-                            {li.unit_price != null ? formatCurrency(li.unit_price) : '-'}
-                          </td>
-                          <td className="py-1.5 px-3 text-right font-medium text-slate-800">
-                            {formatCurrency(li.total_amount)}
-                          </td>
-                          <td className="py-1.5 px-3 text-right text-xs text-slate-500">
-                            {li.period_start ? `${li.period_start.substring(0, 7)}` : '-'}
-                          </td>
-                        </tr>
+                  {/* For MONTHLY_TOTAL: show each invoice in the group */}
+                  {matchType === 'MONTHLY_TOTAL' && supabaseGroup ? (
+                    <div className="space-y-2">
+                      {supabaseGroup.map((groupInv) => (
+                        <div key={groupInv.id} className="border border-blue-200 rounded">
+                          <div className="px-3 py-1.5 bg-blue-100/50 text-xs font-medium text-blue-800 flex justify-between">
+                            <span>Invoice #{groupInv.invoice_number?.substring(0, 20) || 'N/A'} - {groupInv.invoice_date}</span>
+                            <span>{formatCurrency(groupInv.total_amount)}</span>
+                          </div>
+                          {groupInv.lineItems && groupInv.lineItems.length > 0 && (
+                            <table className="w-full">
+                              <tbody>
+                                {groupInv.lineItems.map((li) => (
+                                  <tr key={li.id} className="border-b border-blue-50 text-sm">
+                                    <td className="py-1 px-3 text-slate-700 truncate max-w-md">{li.description || '(no description)'}</td>
+                                    <td className="py-1 px-3 text-right text-slate-600 w-24">{formatCurrency(li.total_amount)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
                       ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="bg-blue-100/30 font-medium text-sm">
-                        <td className="py-1.5 px-3 text-blue-800" colSpan={3}>Total</td>
-                        <td className="py-1.5 px-3 text-right text-blue-900">
-                          {formatCurrency(supabaseInvoice!.lineItems.reduce((s, li) => s + li.total_amount, 0))}
-                        </td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
-                  </table>
+                      <div className="px-3 py-1.5 font-medium text-sm text-blue-900">
+                        Group Total: {formatCurrency(supabaseGroup.reduce((s, i) => s + i.total_amount, 0))}
+                      </div>
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-blue-200 bg-blue-100/30">
+                          <th className="py-1.5 px-3 text-left text-xs font-semibold text-blue-800">Description</th>
+                          <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-20">Qty</th>
+                          <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-24">Unit Price</th>
+                          <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-24">Total</th>
+                          <th className="py-1.5 px-3 text-right text-xs font-semibold text-blue-800 w-28">Period</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {supabaseInvoice!.lineItems.map((li) => (
+                          <tr key={li.id} className="border-b border-blue-100 text-sm hover:bg-white/50">
+                            <td className="py-1.5 px-3 text-slate-700">
+                              <div className="truncate max-w-md" title={li.description}>
+                                {li.description || '(no description)'}
+                              </div>
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-slate-600">
+                              {li.quantity ?? '-'}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-slate-600">
+                              {li.unit_price != null ? formatCurrency(li.unit_price) : '-'}
+                            </td>
+                            <td className="py-1.5 px-3 text-right font-medium text-slate-800">
+                              {formatCurrency(li.total_amount)}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-xs text-slate-500">
+                              {li.period_start ? `${li.period_start.substring(0, 7)}` : '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-blue-100/30 font-medium text-sm">
+                          <td className="py-1.5 px-3 text-blue-800" colSpan={3}>Total</td>
+                          <td className="py-1.5 px-3 text-right text-blue-900">
+                            {formatCurrency(supabaseInvoice!.lineItems.reduce((s, li) => s + li.total_amount, 0))}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
                 </div>
               )}
             </div>

@@ -193,6 +193,35 @@ export function matchInvoices(
     }
   }
 
+  // ─── Pass 5: VENDOR+MONTH TOTAL — 1 ETL invoice vs N Supabase ──────
+  for (const etl of etlInvoices) {
+    if (resultMap.has(etl.groupKey)) continue;
+    const candidates = byVendor.get(etl.supabaseVendor) || [];
+    const amt = etlAmount(etl);
+    const etlMo = month(etl.billingMonth);
+
+    // Collect all unused Supabase invoices for same vendor + same month
+    const sameMonthUnused = candidates.filter(
+      sub => !usedSupabase.has(sub.id) && month(sub.invoice_date) === etlMo
+    );
+    if (sameMonthUnused.length < 2) continue;
+
+    const groupTotal = sameMonthUnused.reduce((s, sub) => s + sub.total_amount, 0);
+    const diff = Math.abs(amt - groupTotal);
+    const pctDiff = groupTotal !== 0 ? diff / Math.abs(groupTotal) : 1;
+
+    if (pctDiff < 0.02) {
+      for (const sub of sameMonthUnused) usedSupabase.add(sub.id);
+      resultMap.set(etl.groupKey, {
+        etlInvoice: etl,
+        supabaseInvoice: sameMonthUnused[0],
+        supabaseInvoiceGroup: sameMonthUnused,
+        matchType: 'MONTHLY_TOTAL',
+        amountDiff: Math.round((amt - groupTotal) * 100) / 100,
+      });
+    }
+  }
+
   // ─── Build final results (unmatched ETL invoices get NONE) ─────────
   const results: MatchResult[] = [];
   for (const etl of etlInvoices) {

@@ -106,7 +106,7 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
         case 'date':
           return dir * a.etl.postingDate.localeCompare(b.etl.postingDate);
         case 'matchType': {
-          const order = { EXACT: 0, CLOSE: 1, MONTH_MATCH: 2 };
+          const order: Record<string, number> = { EXACT: 0, CLOSE: 1, MONTH_MATCH: 2, MONTHLY_TOTAL: 3 };
           return dir * ((order[a.matchType] ?? 3) - (order[b.matchType] ?? 3));
         }
         default:
@@ -345,7 +345,7 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
               : 'text-slate-600 hover:text-slate-800'
           }`}
         >
-          Supabase Only ({analysis.supabaseOnly.length})
+          DB Only ({analysis.supabaseOnly.length})
         </button>
       </div>
 
@@ -376,6 +376,7 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
               <option value="EXACT">Exact</option>
               <option value="CLOSE">Close</option>
               <option value="MONTH_MATCH">Month Match</option>
+              <option value="MONTHLY_TOTAL">Monthly Total</option>
             </select>
           </div>
         )}
@@ -428,6 +429,7 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
               key={m.etl.groupKey}
               etlInvoice={m.etl}
               supabaseInvoice={m.supabase}
+              supabaseGroup={m.supabaseGroup}
               matchType={m.matchType}
               amountDiff={m.amountDiff}
               isSelected={selectedMatched.has(m.etl.groupKey)}
@@ -445,6 +447,8 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
               isNew
               isSelected={selectedNew.has(inv.groupKey)}
               onToggleSelect={() => toggleSelectItem(inv.groupKey)}
+              overrides={overrides.get(inv.groupKey)}
+              onOverride={handleOverride}
             />
           ))}
 
