@@ -31,23 +31,25 @@ export default function Dashboard() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const now = new Date();
-  const yearStart = new Date(now.getFullYear(), 0, 1);
+  const yearPrefix = `${now.getFullYear()}-`; // "2026-" — string compare avoids timezone bugs
+
+  const isYTD = (inv: InvoiceWithVendor) => inv.invoiceDate >= yearPrefix;
 
   const spendYTD = invoices.reduce((acc, inv) => {
-    return new Date(inv.invoiceDate) >= yearStart ? acc + (inv.totalAmount || 0) : acc;
+    return isYTD(inv) ? acc + (inv.totalAmount || 0) : acc;
   }, 0);
 
   const paidYTD = invoices.reduce((acc, inv) => {
-    return inv.status === 'Paid' && new Date(inv.invoiceDate) >= yearStart ? acc + (inv.totalAmount || 0) : acc;
+    return inv.status === 'Paid' && isYTD(inv) ? acc + (inv.totalAmount || 0) : acc;
   }, 0);
 
   const outstandingAmount = invoices.reduce((acc, inv) => {
-    return inv.status === 'Pending' || inv.status === 'Overdue' ? acc + (inv.totalAmount || 0) : acc;
+    return (inv.status === 'Pending' || inv.status === 'Overdue') && isYTD(inv) ? acc + (inv.totalAmount || 0) : acc;
   }, 0);
 
-  const pendingCount = invoices.filter(inv => inv.status === 'Pending' || inv.status === 'Overdue').length;
-  const oldestPending = invoices
-    .filter(inv => inv.status === 'Pending' || inv.status === 'Overdue')
+  const pendingYTD = invoices.filter(inv => (inv.status === 'Pending' || inv.status === 'Overdue') && isYTD(inv));
+  const pendingCount = pendingYTD.length;
+  const oldestPending = pendingYTD
     .map(inv => new Date(inv.invoiceDate))
     .sort((a, b) => a.getTime() - b.getTime())[0];
 
