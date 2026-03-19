@@ -26,7 +26,7 @@ const PHASE_MESSAGES = [
   'Fetching GL journal entries...',
   'Classifying rows...',
   'Reconstructing invoices...',
-  'Matching against Supabase...',
+  'Matching against database...',
   'Preparing results...',
 ];
 
@@ -296,7 +296,13 @@ export function SapImportTab() {
           </div>
 
           {/* Match results table */}
-          <SapMatchResults analysis={analysis} onRefetch={handleRefetch} />
+          <SapMatchResults
+            analysis={analysis}
+            onRefetch={handleRefetch}
+            onAnalysisUpdate={(updated) => {
+              setAnalysis(prev => prev ? { ...prev, ...updated } : prev);
+            }}
+          />
         </>
       )}
     </div>

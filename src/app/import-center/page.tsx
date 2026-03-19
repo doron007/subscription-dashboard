@@ -29,7 +29,7 @@ function ImportCenterContent() {
     const searchParams = useSearchParams();
 
     // Tab state
-    const [activeTab, setActiveTab] = useState<TabType>('scan');
+    const [activeTab, setActiveTab] = useState<TabType>('sap');
 
     // Device scan refs and state
     const scanFileInputRef = useRef<HTMLInputElement>(null);
@@ -443,6 +443,17 @@ function ImportCenterContent() {
                 <div className="border-b border-slate-200">
                     <nav className="flex gap-8" aria-label="Tabs">
                         <button
+                            onClick={() => setActiveTab('sap')}
+                            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${
+                                activeTab === 'sap'
+                                    ? 'border-teal-500 text-teal-600'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                            }`}
+                        >
+                            <Database className="w-4 h-4" />
+                            SAP Import
+                        </button>
+                        <button
                             onClick={() => setActiveTab('scan')}
                             className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${
                                 activeTab === 'scan'
@@ -463,17 +474,6 @@ function ImportCenterContent() {
                         >
                             <FileSpreadsheet className="w-4 h-4" />
                             Import Data
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('sap')}
-                            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${
-                                activeTab === 'sap'
-                                    ? 'border-teal-500 text-teal-600'
-                                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                            }`}
-                        >
-                            <Database className="w-4 h-4" />
-                            SAP Import
                         </button>
                     </nav>
                 </div>

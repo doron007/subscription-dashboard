@@ -26,6 +26,7 @@ const BATCH_SIZE = 50;
 interface SapMatchResultsProps {
   analysis: SapImportAnalysis;
   onRefetch: () => void;
+  onAnalysisUpdate?: (updated: Partial<SapImportAnalysis>) => void;
 }
 
 function formatCurrency(amount: number): string {
@@ -35,7 +36,7 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
+export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate }: SapMatchResultsProps) {
   const [activeTab, setActiveTab] = useState<ResultTab>('matched');
   const [searchQuery, setSearchQuery] = useState('');
   const [matchTypeFilter, setMatchTypeFilter] = useState<string>('all');
@@ -50,13 +51,62 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
   // Override state for matched invoices
   const [overrides, setOverrides] = useState<Map<string, InvoiceOverrides>>(new Map());
 
+  const [isRematching, setIsRematching] = useState(false);
+
+  const triggerRematch = useCallback(async (updatedOverrides: Map<string, InvoiceOverrides>) => {
+    if (!onAnalysisUpdate) return;
+    setIsRematching(true);
+    try {
+      // Build ETL invoices with overridden billing months applied
+      const allEtl = [
+        ...analysis.matched.map(m => m.etl),
+        ...analysis.newInvoices,
+      ];
+      const adjustedEtl = allEtl.map(etl => {
+        const ov = updatedOverrides.get(etl.groupKey);
+        if (ov?.billingMonth) {
+          return { ...etl, billingMonth: ov.billingMonth };
+        }
+        return etl;
+      });
+
+      const res = await fetch('/api/sap/rematch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          etlInvoices: adjustedEtl,
+          dataYear: analysis.sapMeta.dataYear,
+        }),
+      });
+      if (!res.ok) throw new Error('Re-match failed');
+      const data = await res.json();
+      onAnalysisUpdate({
+        matched: data.matched,
+        newInvoices: data.newInvoices,
+        supabaseOnly: data.supabaseOnly,
+      });
+    } catch (err) {
+      console.error('Rematch error:', err);
+    } finally {
+      setIsRematching(false);
+    }
+  }, [analysis, onAnalysisUpdate]);
+
   const handleOverride = useCallback((groupKey: string, newOverrides: InvoiceOverrides) => {
     setOverrides(prev => {
       const next = new Map(prev);
+      const old = prev.get(groupKey);
       next.set(groupKey, newOverrides);
+
+      // If billing month changed, trigger re-match
+      if (newOverrides.billingMonth && newOverrides.billingMonth !== old?.billingMonth) {
+        // Defer so state updates first
+        setTimeout(() => triggerRematch(next), 0);
+      }
+
       return next;
     });
-  }, []);
+  }, [triggerRematch]);
 
   // Import state
   const [isImporting, setIsImporting] = useState(false);
@@ -348,6 +398,14 @@ export function SapMatchResults({ analysis, onRefetch }: SapMatchResultsProps) {
           DB Only ({analysis.supabaseOnly.length})
         </button>
       </div>
+
+      {/* Rematching indicator */}
+      {isRematching && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 text-sm rounded-lg border border-blue-200">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Re-matching with updated billing periods...
+        </div>
+      )}
 
       {/* Filters bar */}
       <div className="flex items-center gap-3 flex-wrap">
