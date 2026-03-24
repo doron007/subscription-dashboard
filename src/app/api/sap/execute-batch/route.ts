@@ -20,6 +20,7 @@ interface SapBatchRequest {
   actions: SapBatchAction[];
   batchIndex: number;
   totalBatches: number;
+  dataYear?: number;
 }
 
 interface SapBatchResult {
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
 
   try {
     const body: SapBatchRequest = await request.json();
-    const { actions, batchIndex, totalBatches } = body;
+    const { actions, batchIndex, totalBatches, dataYear } = body;
 
     if (!actions || !Array.isArray(actions) || actions.length === 0) {
       return NextResponse.json(
@@ -256,6 +257,14 @@ export async function POST(request: Request) {
             }
             result.updated.lineItems += lineItems.length;
           }
+        }
+        // Mark override as imported (if one exists for this groupKey)
+        if (dataYear && etlInvoice.groupKey) {
+          await supabase
+            .from('sub_etl_overrides')
+            .update({ imported_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+            .eq('group_key', etlInvoice.groupKey)
+            .eq('data_year', dataYear);
         }
       } catch (actionError) {
         const msg = actionError instanceof Error ? actionError.message : String(actionError);

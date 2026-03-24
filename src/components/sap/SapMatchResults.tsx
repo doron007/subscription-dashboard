@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   Search,
   Filter,
@@ -15,8 +15,9 @@ import {
   Trash2,
   Calendar,
   ExternalLink,
+  Save,
 } from 'lucide-react';
-import type { SapImportAnalysis, ETLInvoice, SupabaseInvoice, InvoiceOverrides } from '@/lib/etl/types';
+import type { SapImportAnalysis, ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride } from '@/lib/etl/types';
 import { SapInvoiceRow } from './SapInvoiceRow';
 
 type ResultTab = 'matched' | 'new' | 'supabase-only';
@@ -58,8 +59,55 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
   const [selectedMatched, setSelectedMatched] = useState<Set<string>>(new Set());
   const [selectedNew, setSelectedNew] = useState<Set<string>>(new Set());
 
-  // Override state for matched invoices
-  const [overrides, setOverrides] = useState<Map<string, InvoiceOverrides>>(new Map());
+  // Override state — initialized from persisted overrides
+  const [overrides, setOverrides] = useState<Map<string, InvoiceOverrides>>(() => {
+    const initial = new Map<string, InvoiceOverrides>();
+    if (analysis.overrides) {
+      for (const [key, ov] of Object.entries(analysis.overrides)) {
+        if (ov.importedAt) continue; // Skip already-imported overrides
+        initial.set(key, {
+          billingMonth: ov.billingMonthOverride,
+          importAction: ov.importAction as InvoiceOverrides['importAction'],
+          amountOverride: ov.amountOverride,
+        });
+      }
+    }
+    return initial;
+  });
+
+  // Debounced persistence of overrides
+  const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const persistOverride = useCallback((groupKey: string, ov: InvoiceOverrides, etl: ETLInvoice) => {
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      fetch('/api/sap/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groupKey,
+          vendorName: etl.supabaseVendor || etl.sapVendor,
+          dataYear: analysis.sapMeta.dataYear,
+          billingMonthOverride: ov.billingMonth || null,
+          amountOverride: ov.amountOverride || null,
+          importAction: ov.importAction || 'PENDING',
+          sapAmount: etl.computedAmount !== etl.rawAmount ? etl.computedAmount : etl.rawAmount,
+        }),
+      }).catch(err => console.error('Failed to persist override:', err));
+    }, 500);
+  }, [analysis.sapMeta.dataYear]);
+
+  const clearAllOverrides = useCallback(async () => {
+    if (!confirm('Clear all saved decisions? This cannot be undone.')) return;
+    const year = analysis.sapMeta.dataYear;
+    const res = await fetch(`/api/sap/overrides?year=${year}`);
+    const { overrides: all } = await res.json();
+    for (const ov of all || []) {
+      if (!ov.imported_at) {
+        await fetch(`/api/sap/overrides/${ov.id}`, { method: 'DELETE' });
+      }
+    }
+    setOverrides(new Map());
+  }, [analysis.sapMeta.dataYear]);
 
   const [isRematching, setIsRematching] = useState(false);
 
@@ -102,21 +150,25 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     }
   }, [analysis, onAnalysisUpdate]);
 
-  const handleOverride = useCallback((groupKey: string, newOverrides: InvoiceOverrides) => {
+  const handleOverride = useCallback((groupKey: string, newOverrides: InvoiceOverrides, etl?: ETLInvoice) => {
     setOverrides(prev => {
       const next = new Map(prev);
       const old = prev.get(groupKey);
       next.set(groupKey, newOverrides);
 
+      // Persist to DB (debounced)
+      if (etl) {
+        persistOverride(groupKey, newOverrides, etl);
+      }
+
       // If billing month changed, trigger re-match
       if (newOverrides.billingMonth && newOverrides.billingMonth !== old?.billingMonth) {
-        // Defer so state updates first
         setTimeout(() => triggerRematch(next), 0);
       }
 
       return next;
     });
-  }, [triggerRematch]);
+  }, [triggerRematch, persistOverride]);
 
   // Import state
   const [isImporting, setIsImporting] = useState(false);
@@ -306,7 +358,16 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     }
 
     for (const inv of newToImport) {
-      allItems.push({ type: 'create', etl: inv, supabaseId: null });
+      const ov = overrides.get(inv.groupKey);
+      allItems.push({
+        type: 'create',
+        etl: inv,
+        supabaseId: null,
+        overrides: (ov?.billingMonth || ov?.amountOverride) ? {
+          billingMonth: ov.billingMonth,
+          amountOverride: ov.amountOverride,
+        } : undefined,
+      });
     }
 
     const totalBatches = Math.ceil(allItems.length / BATCH_SIZE);
@@ -330,7 +391,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
         const response = await fetch('/api/sap/execute-batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ actions, batchIndex: i, totalBatches }),
+          body: JSON.stringify({ actions, batchIndex: i, totalBatches, dataYear: analysis.sapMeta.dataYear }),
         });
 
         if (!response.ok) {
@@ -467,6 +528,15 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
             >
               Deselect All
             </button>
+            {Object.keys(analysis.overrides || {}).length > 0 && (
+              <button
+                onClick={clearAllOverrides}
+                className="text-xs text-amber-600 hover:text-amber-800 font-medium flex items-center gap-1"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear Saved Decisions
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -506,6 +576,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
               onToggleSelect={() => toggleSelectItem(m.etl.groupKey)}
               overrides={overrides.get(m.etl.groupKey)}
               onOverride={handleOverride}
+              persistedOverride={analysis.overrides?.[m.etl.groupKey]}
             />
           ))}
 
@@ -519,6 +590,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
               onToggleSelect={() => toggleSelectItem(inv.groupKey)}
               overrides={overrides.get(inv.groupKey)}
               onOverride={handleOverride}
+              persistedOverride={analysis.overrides?.[inv.groupKey]}
             />
           ))}
 

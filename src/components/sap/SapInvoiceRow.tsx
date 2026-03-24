@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { ETLInvoice, SupabaseInvoice, InvoiceOverrides } from '@/lib/etl/types';
+import { ChevronDown, ChevronRight, Save, AlertTriangle, Trash2 } from 'lucide-react';
+import type { ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride } from '@/lib/etl/types';
 
 interface SapInvoiceRowProps {
   etlInvoice: ETLInvoice;
@@ -14,7 +14,8 @@ interface SapInvoiceRowProps {
   isSelected: boolean;
   onToggleSelect: () => void;
   overrides?: InvoiceOverrides;
-  onOverride?: (groupKey: string, overrides: InvoiceOverrides) => void;
+  onOverride?: (groupKey: string, overrides: InvoiceOverrides, etl?: ETLInvoice) => void;
+  persistedOverride?: ETLOverride;
 }
 
 function formatCurrency(amount: number): string {
@@ -54,6 +55,7 @@ export function SapInvoiceRow({
   onToggleSelect,
   overrides,
   onOverride,
+  persistedOverride,
 }: SapInvoiceRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [showSapDetail, setShowSapDetail] = useState(true);
@@ -75,9 +77,20 @@ export function SapInvoiceRow({
 
   const effectiveBillingMonth = overrides?.billingMonth || etlInvoice.billingMonth;
 
+  const hasPersisted = !!persistedOverride && !persistedOverride.importedAt;
+  const hasConflict = !!persistedOverride?.conflict;
+
   function handleOverride(partial: Partial<InvoiceOverrides>) {
     if (!onOverride) return;
-    onOverride(etlInvoice.groupKey, { ...overrides, ...partial });
+    onOverride(etlInvoice.groupKey, { ...overrides, ...partial }, etlInvoice);
+  }
+
+  async function clearOverride() {
+    if (!persistedOverride) return;
+    await fetch(`/api/sap/overrides/${persistedOverride.id}`, { method: 'DELETE' });
+    if (onOverride) {
+      onOverride(etlInvoice.groupKey, {}, etlInvoice);
+    }
   }
 
   return (
@@ -112,6 +125,17 @@ export function SapInvoiceRow({
               {etlInvoice.supabaseVendor || etlInvoice.sapVendor}
             </span>
             <MatchBadge matchType={badgeType} />
+            {hasPersisted && !hasConflict && (
+              <span title="Decision saved" className="text-blue-500"><Save className="w-3.5 h-3.5" /></span>
+            )}
+            {hasConflict && (
+              <span title="SAP data changed since your last decision" className="text-amber-500"><AlertTriangle className="w-3.5 h-3.5" /></span>
+            )}
+            {hasPersisted && (
+              <button onClick={clearOverride} title="Clear saved decision" className="text-slate-400 hover:text-red-500">
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
             {isSkipped && <span className="text-xs text-slate-400 italic">Skipped</span>}
           </div>
           <div className="text-xs text-slate-500 mt-0.5">

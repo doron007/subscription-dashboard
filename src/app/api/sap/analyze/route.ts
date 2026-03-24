@@ -164,6 +164,39 @@ export async function POST(request: Request) {
       (si) => !matchedSupabaseIds.has(si.id) && si.invoice_date >= yearPrefix
     );
 
+    // --- Step 6.5: Load persisted overrides and detect conflicts ---
+    const { data: overrideRows } = await supabase
+      .from('sub_etl_overrides')
+      .select('*')
+      .eq('data_year', dataYear);
+
+    const overrides: Record<string, import('@/lib/etl/types').ETLOverride> = {};
+    for (const row of overrideRows || []) {
+      // Find corresponding ETL invoice to check for conflicts
+      const allEtl = [...matched.map(m => m.etl), ...newInvoices];
+      const etl = allEtl.find(e => e.groupKey === row.group_key);
+      const currentAmount = etl?.computedAmount ?? etl?.rawAmount;
+      const conflict = row.sap_amount != null && currentAmount != null
+        ? Math.abs(row.sap_amount - currentAmount) > 0.05
+        : false;
+
+      overrides[row.group_key] = {
+        id: row.id,
+        groupKey: row.group_key,
+        vendorName: row.vendor_name,
+        dataYear: row.data_year,
+        billingMonthOverride: row.billing_month_override || undefined,
+        amountOverride: row.amount_override != null ? parseFloat(row.amount_override) : undefined,
+        importAction: row.import_action,
+        sapAmount: row.sap_amount != null ? parseFloat(row.sap_amount) : undefined,
+        notes: row.notes || undefined,
+        importedAt: row.imported_at || undefined,
+        conflict,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    }
+
     // --- Build warnings ---
     const warnings: string[] = [];
     if (sapRows.length === 0) {
@@ -171,6 +204,10 @@ export async function POST(request: Request) {
     }
     if (etlInvoices.length === 0 && sapRows.length > 0) {
       warnings.push('SAP returned rows but no invoices could be reconstructed. Check vendor mappings.');
+    }
+    const conflictCount = Object.values(overrides).filter(o => o.conflict).length;
+    if (conflictCount > 0) {
+      warnings.push(`${conflictCount} override(s) have conflicts — SAP amounts changed since your last decision.`);
     }
 
     const analysis: SapImportAnalysis = {
@@ -184,6 +221,7 @@ export async function POST(request: Request) {
       matched,
       newInvoices,
       supabaseOnly,
+      overrides,
       warnings,
     };
 

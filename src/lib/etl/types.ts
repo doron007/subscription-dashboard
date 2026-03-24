@@ -74,6 +74,24 @@ export interface MatchResult {
   amountDiff: number;
 }
 
+// ─── Persistent Override Types ──────────────────────────────────────────────
+
+export interface ETLOverride {
+  id: string;
+  groupKey: string;
+  vendorName: string;
+  dataYear: number;
+  billingMonthOverride?: string;
+  amountOverride?: number;
+  importAction: string;    // PENDING | UPDATE | CREATE | SKIP
+  sapAmount?: number;
+  notes?: string;
+  importedAt?: string;
+  conflict?: boolean;      // computed: true when sapAmount differs from current ETL amount
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ─── API-specific types ─────────────────────────────────────────────────────
 
 export interface SapImportAnalysis {
@@ -87,6 +105,7 @@ export interface SapImportAnalysis {
   matched: { etl: ETLInvoice; supabase: SupabaseInvoice; supabaseGroup?: SupabaseInvoice[]; matchType: 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'MONTHLY_TOTAL'; amountDiff: number }[];
   newInvoices: ETLInvoice[];
   supabaseOnly: SupabaseInvoice[];
+  overrides: Record<string, ETLOverride>;
   warnings: string[];
 }
 
