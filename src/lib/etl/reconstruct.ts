@@ -111,15 +111,19 @@ export function reconstructNavigator(rows: ClassifiedRow[], supabaseVendor: stri
  * Pinnacle: Group by posting date; each date has DWE 72% + SEF 20% = 92% of total.
  */
 export function reconstructPinnacle(rows: ClassifiedRow[], supabaseVendor: string): ETLInvoice[] {
+  // Group by posting date AND billing month (rows on the same date can span multiple months)
   const groups = new Map<string, ClassifiedRow[]>();
   for (const row of rows) {
-    const key = row.postingDate;
+    const bm = deriveBillingMonth(row);
+    const key = `${row.postingDate}|${bm}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(row);
   }
 
-  return Array.from(groups.entries()).map(([date, group]) => {
+  return Array.from(groups.entries()).map(([key, group]) => {
     const rawSum = group.reduce((s, r) => s + r.debitAmount - r.creditAmount, 0);
+    const billingMonth = deriveBillingMonth(group[0]);
+    const postingDate = group[0].postingDate;
 
     // DWE 72% + SEF 20% = 92% of total invoice
     const dwe = group.filter(r => r.description.includes('DWE'));
@@ -128,7 +132,6 @@ export function reconstructPinnacle(rows: ClassifiedRow[], supabaseVendor: strin
     let note = '';
 
     if (dwe.length > 0 && sef.length > 0) {
-      // Use DWE amount / 0.72 to compute full
       const dweAmt = dwe.reduce((s, r) => s + r.debitAmount, 0);
       computedAmount = Math.round((dweAmt / 0.72) * 100) / 100;
       const sefAmt = sef.reduce((s, r) => s + r.debitAmount, 0);
@@ -138,9 +141,9 @@ export function reconstructPinnacle(rows: ClassifiedRow[], supabaseVendor: strin
     return {
       sapVendor: 'PINNACLE BUSINESS SYSTEMS INC',
       supabaseVendor,
-      groupKey: `PINNACLE|${date}`,
-      postingDate: date,
-      billingMonth: deriveBillingMonth(group[0]),
+      groupKey: `PINNACLE|${key}`,
+      postingDate,
+      billingMonth,
       rawAmount: Math.round(rawSum * 100) / 100,
       computedAmount,
       allocationNote: note,
