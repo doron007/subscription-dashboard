@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Save, AlertTriangle, Trash2 } from 'lucide-react';
-import type { ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride } from '@/lib/etl/types';
+import { ChevronDown, ChevronRight, Save, AlertTriangle, Trash2, CheckCircle2 } from 'lucide-react';
+import type { ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride, ReviewReason } from '@/lib/etl/types';
+import { formatReviewReason } from '@/lib/etl/classify-match';
+import type { MatchedItem } from '@/lib/etl/types';
 
 interface SapInvoiceRowProps {
   etlInvoice: ETLInvoice;
@@ -16,6 +18,10 @@ interface SapInvoiceRowProps {
   overrides?: InvoiceOverrides;
   onOverride?: (groupKey: string, overrides: InvoiceOverrides, etl?: ETLInvoice) => void;
   persistedOverride?: ETLOverride;
+  readOnly?: boolean;
+  reviewReasons?: ReviewReason[];
+  suggestion?: string;
+  onConfirm?: (groupKey: string, etl: ETLInvoice) => void;
 }
 
 function formatCurrency(amount: number): string {
@@ -56,6 +62,10 @@ export function SapInvoiceRow({
   overrides,
   onOverride,
   persistedOverride,
+  readOnly = false,
+  reviewReasons,
+  suggestion,
+  onConfirm,
 }: SapInvoiceRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [showSapDetail, setShowSapDetail] = useState(true);
@@ -101,16 +111,20 @@ export function SapInvoiceRow({
           hasLargeDiff && !isNew ? 'bg-red-50/30' : 'bg-white'
         }`}
       >
-        <input
-          type="checkbox"
-          checked={isSelected && !isSkipped}
-          disabled={isSkipped}
-          onChange={(e) => {
-            e.stopPropagation();
-            onToggleSelect();
-          }}
-          className="w-4 h-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 flex-shrink-0"
-        />
+        {readOnly ? (
+          <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+        ) : (
+          <input
+            type="checkbox"
+            checked={isSelected && !isSkipped}
+            disabled={isSkipped}
+            onChange={(e) => {
+              e.stopPropagation();
+              onToggleSelect();
+            }}
+            className="w-4 h-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 flex-shrink-0"
+          />
+        )}
 
         <button
           onClick={() => setExpanded(!expanded)}
@@ -125,6 +139,15 @@ export function SapInvoiceRow({
               {etlInvoice.supabaseVendor || etlInvoice.sapVendor}
             </span>
             <MatchBadge matchType={badgeType} />
+            {reviewReasons && reviewReasons.length > 0 && reviewReasons.map((reason) => (
+              <span
+                key={reason}
+                className="px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200"
+                title={formatReviewReason(reason, { etl: etlInvoice, supabase: supabaseInvoice!, supabaseGroup, matchType: matchType as MatchedItem['matchType'], amountDiff: amountDiff ?? 0 })}
+              >
+                {formatReviewReason(reason, { etl: etlInvoice, supabase: supabaseInvoice!, supabaseGroup, matchType: matchType as MatchedItem['matchType'], amountDiff: amountDiff ?? 0 })}
+              </span>
+            ))}
             {hasPersisted && !hasConflict && (
               <span title="Decision saved" className="text-blue-500"><Save className="w-3.5 h-3.5" /></span>
             )}
@@ -137,7 +160,22 @@ export function SapInvoiceRow({
               </button>
             )}
             {isSkipped && <span className="text-xs text-slate-400 italic">Skipped</span>}
+            {onConfirm && !readOnly && !isSkipped && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onConfirm(etlInvoice.groupKey, etlInvoice); }}
+                title="Confirm — DB is correct, no action needed"
+                className="px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 transition-colors"
+              >
+                <CheckCircle2 className="w-3 h-3 inline mr-0.5" />
+                Confirm
+              </button>
+            )}
           </div>
+          {suggestion && (
+            <div className="text-xs text-blue-600 mt-0.5 italic">
+              {suggestion}
+            </div>
+          )}
           <div className="text-xs text-slate-500 mt-0.5">
             {effectiveBillingMonth} &bull; {etlInvoice.lineItems.length} line items
           </div>
@@ -175,7 +213,7 @@ export function SapInvoiceRow({
       {expanded && (
         <div className="border-t border-slate-200">
           {/* Override controls (for both matched and new records) */}
-          {onOverride && (
+          {onOverride && !readOnly && (
             <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex flex-wrap items-center gap-4 text-sm">
               <div className="flex items-center gap-2">
                 <label className="text-slate-600 font-medium">Import As:</label>

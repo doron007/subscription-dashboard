@@ -197,6 +197,31 @@ export async function POST(request: Request) {
       };
     }
 
+    // --- Step 7: Compute vendor profiles from DB invoices ---
+    const vendorProfiles: Record<string, import('@/lib/etl/types').VendorProfile> = {};
+    const vendorInvoiceMap = new Map<string, typeof supabaseInvoices>();
+    for (const inv of supabaseInvoices) {
+      if (!vendorInvoiceMap.has(inv.vendor_name)) vendorInvoiceMap.set(inv.vendor_name, []);
+      vendorInvoiceMap.get(inv.vendor_name)!.push(inv);
+    }
+    for (const [vendorName, invoices] of vendorInvoiceMap) {
+      const amounts = invoices.map(i => i.total_amount);
+      const sorted = [...amounts].sort((a, b) => a - b);
+      const min = sorted[0];
+      const max = sorted[sorted.length - 1];
+      const median = sorted[Math.floor(sorted.length / 2)];
+      const isFixed = invoices.length >= 2 && (max - min) < 0.05;
+      const months = [...new Set(invoices.map(i => i.invoice_date.substring(0, 7)))].sort();
+      vendorProfiles[vendorName] = {
+        vendorName,
+        invoiceCount: invoices.length,
+        isFixedAmount: isFixed,
+        typicalAmount: isFixed ? median : null,
+        amountRange: [min, max],
+        monthsCovered: months,
+      };
+    }
+
     // --- Build warnings ---
     const warnings: string[] = [];
     if (sapRows.length === 0) {
@@ -222,6 +247,7 @@ export async function POST(request: Request) {
       newInvoices,
       supabaseOnly,
       overrides,
+      vendorProfiles,
       warnings,
     };
 

@@ -30,7 +30,7 @@ export async function GET(request: Request) {
 // POST /api/sap/overrides — upsert an override
 export async function POST(request: Request) {
   const body = await request.json();
-  const { groupKey, vendorName, dataYear, billingMonthOverride, amountOverride, importAction, sapAmount, notes } = body;
+  const { groupKey, vendorName, dataYear, billingMonthOverride, amountOverride, importAction, sapAmount, notes, setImportedAt } = body;
 
   if (!groupKey || !dataYear) {
     return NextResponse.json({ error: 'groupKey and dataYear are required' }, { status: 400 });
@@ -52,6 +52,7 @@ export async function POST(request: Request) {
         sap_amount: sapAmount || null,
         notes: notes || null,
         updated_at: new Date().toISOString(),
+        ...(setImportedAt ? { imported_at: new Date().toISOString() } : {}),
       },
       { onConflict: 'group_key,data_year' }
     )

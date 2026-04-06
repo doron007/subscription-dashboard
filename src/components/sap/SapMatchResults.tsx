@@ -10,6 +10,7 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Trash2,
@@ -17,8 +18,9 @@ import {
   ExternalLink,
   Save,
 } from 'lucide-react';
-import type { SapImportAnalysis, ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride } from '@/lib/etl/types';
+import type { SapImportAnalysis, ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride, NeedsReviewItem } from '@/lib/etl/types';
 import { SapInvoiceRow } from './SapInvoiceRow';
+import { classifyAllMatches } from '@/lib/etl/classify-match';
 
 type ResultTab = 'matched' | 'new' | 'supabase-only';
 type SortField = 'vendor' | 'amount' | 'date' | 'matchType';
@@ -74,6 +76,13 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     }
     return initial;
   });
+
+  // Classify matched items into confirmed vs needs-review
+  const { confirmed, needsReview } = useMemo(
+    () => classifyAllMatches(analysis.matched, analysis.overrides || {}, analysis.vendorProfiles),
+    [analysis.matched, analysis.overrides, analysis.vendorProfiles]
+  );
+  const [confirmedExpanded, setConfirmedExpanded] = useState(false);
 
   // Debounced persistence of overrides
   const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -170,6 +179,43 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     });
   }, [triggerRematch, persistOverride]);
 
+  // Confirm handler — persists CONFIRM action with imported_at immediately (no debounce)
+  const handleConfirm = useCallback(async (groupKey: string, etl: ETLInvoice) => {
+    // Persist to DB immediately with imported_at set
+    try {
+      await fetch('/api/sap/overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groupKey,
+          vendorName: etl.supabaseVendor || etl.sapVendor,
+          dataYear: analysis.sapMeta.dataYear,
+          importAction: 'CONFIRM',
+          sapAmount: etl.computedAmount !== etl.rawAmount ? etl.computedAmount : etl.rawAmount,
+          setImportedAt: true,
+        }),
+      });
+      // Update local override state so classification recomputes
+      setOverrides(prev => {
+        const next = new Map(prev);
+        next.set(groupKey, { importAction: 'CONFIRM' });
+        return next;
+      });
+      // Update analysis overrides so classifyAllMatches picks it up
+      if (onAnalysisUpdate) {
+        const updatedOverrides = { ...analysis.overrides };
+        updatedOverrides[groupKey] = {
+          ...(updatedOverrides[groupKey] || { id: '', groupKey, vendorName: etl.supabaseVendor || etl.sapVendor, dataYear: analysis.sapMeta.dataYear, importAction: 'CONFIRM', createdAt: '', updatedAt: '' }),
+          importAction: 'CONFIRM',
+          importedAt: new Date().toISOString(),
+        };
+        onAnalysisUpdate({ overrides: updatedOverrides });
+      }
+    } catch (err) {
+      console.error('Failed to confirm:', err);
+    }
+  }, [analysis.sapMeta.dataYear, analysis.overrides, onAnalysisUpdate]);
+
   // Import state
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
@@ -191,9 +237,9 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     resetPage();
   };
 
-  // Filtered + sorted matched results
+  // Filtered + sorted needs-review results (confirmed items shown separately)
   const filteredMatched = useMemo(() => {
-    let items = [...analysis.matched];
+    let items: NeedsReviewItem[] = [...needsReview];
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -227,7 +273,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     });
 
     return items;
-  }, [analysis.matched, searchQuery, matchTypeFilter, sortField, sortDir]);
+  }, [needsReview, searchQuery, matchTypeFilter, sortField, sortDir]);
 
   // Filtered + sorted new results
   const filteredNew = useMemo(() => {
@@ -309,7 +355,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
   const selectAll = () => {
     const keys =
       activeTab === 'matched'
-        ? filteredMatched.map((m) => m.etl.groupKey)
+        ? filteredMatched.map((m) => m.etl.groupKey) // Only needs-review items (confirmed excluded)
         : filteredNew.map((inv) => inv.groupKey);
     setCurrentSelection(new Set(keys));
   };
@@ -447,7 +493,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
                 : 'text-slate-600 hover:text-slate-800'
             }`}
           >
-            Matched ({analysis.matched.length})
+            Matched ({analysis.matched.length}{needsReview.length > 0 ? ` \u00b7 ${needsReview.length} to review` : ''})
           </button>
           <button
             onClick={() => { setActiveTab('new'); resetPage(); }}
@@ -563,6 +609,112 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
 
       {/* Results list */}
       <div className="space-y-2">
+        {/* Confirmed section (matched tab only) */}
+        {activeTab === 'matched' && confirmed.length > 0 && (
+          <div className="rounded-lg border border-green-200 overflow-hidden">
+            <button
+              onClick={() => setConfirmedExpanded(!confirmedExpanded)}
+              className="w-full flex items-center gap-3 px-4 py-2.5 bg-green-50 hover:bg-green-100/70 transition-colors text-left"
+            >
+              {confirmedExpanded ? <ChevronDown className="w-4 h-4 text-green-600" /> : <ChevronRight className="w-4 h-4 text-green-600" />}
+              <Check className="w-4 h-4 text-green-600" />
+              <span className="text-sm font-medium text-green-800">
+                Confirmed &mdash; {confirmed.length} invoices
+              </span>
+              <span className="text-xs text-green-600 ml-1">
+                (previously imported, no action needed)
+              </span>
+            </button>
+            {confirmedExpanded && (
+              <div className="space-y-1 p-2 bg-green-50/30">
+                {confirmed.map((m) => (
+                  <SapInvoiceRow
+                    key={m.etl.groupKey}
+                    etlInvoice={m.etl}
+                    supabaseInvoice={m.supabase}
+                    supabaseGroup={m.supabaseGroup}
+                    matchType={m.matchType}
+                    amountDiff={m.amountDiff}
+                    isSelected={false}
+                    onToggleSelect={() => {}}
+                    readOnly
+                    persistedOverride={analysis.overrides?.[m.etl.groupKey]}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Needs Review section header (matched tab only, when there are confirmed items too) */}
+        {activeTab === 'matched' && confirmed.length > 0 && needsReview.length > 0 && (() => {
+          const manualEntryCount = needsReview.filter(
+            m => m.reviewReasons.length === 1 && m.reviewReasons[0] === 'NO_SAP_HISTORY'
+          ).length;
+          return (
+            <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 rounded-lg border border-amber-200 flex-wrap">
+              <AlertCircle className="w-4 h-4 text-amber-500" />
+              <span className="text-sm font-medium text-amber-800">
+                Needs Review &mdash; {filteredMatched.length} invoices
+              </span>
+              <span className="text-xs text-amber-600 ml-1">
+                (differences detected, action may be needed)
+              </span>
+              {manualEntryCount > 0 && (
+                <button
+                  onClick={async () => {
+                    const items = needsReview.filter(
+                      m => m.reviewReasons.length === 1 && m.reviewReasons[0] === 'NO_SAP_HISTORY'
+                    );
+                    if (!confirm(`Confirm ${items.length} manual entries as matching SAP? This marks them as reviewed — no data is changed.`)) return;
+                    // Fire all API calls in parallel
+                    await Promise.all(items.map(item =>
+                      fetch('/api/sap/overrides', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          groupKey: item.etl.groupKey,
+                          vendorName: item.etl.supabaseVendor || item.etl.sapVendor,
+                          dataYear: analysis.sapMeta.dataYear,
+                          importAction: 'CONFIRM',
+                          sapAmount: item.etl.computedAmount !== item.etl.rawAmount ? item.etl.computedAmount : item.etl.rawAmount,
+                          setImportedAt: true,
+                        }),
+                      })
+                    ));
+                    // Batch update local overrides state
+                    setOverrides(prev => {
+                      const next = new Map(prev);
+                      for (const item of items) {
+                        next.set(item.etl.groupKey, { importAction: 'CONFIRM' });
+                      }
+                      return next;
+                    });
+                    // Single batch update to analysis overrides
+                    if (onAnalysisUpdate) {
+                      const updatedOverrides = { ...analysis.overrides };
+                      const now = new Date().toISOString();
+                      for (const item of items) {
+                        updatedOverrides[item.etl.groupKey] = {
+                          ...(updatedOverrides[item.etl.groupKey] || { id: '', groupKey: item.etl.groupKey, vendorName: item.etl.supabaseVendor || item.etl.sapVendor, dataYear: analysis.sapMeta.dataYear, importAction: 'CONFIRM', createdAt: '', updatedAt: '' }),
+                          importAction: 'CONFIRM',
+                          importedAt: now,
+                        };
+                      }
+                      onAnalysisUpdate({ overrides: updatedOverrides });
+                    }
+                  }}
+                  className="ml-auto px-2.5 py-1 rounded text-xs font-medium bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 transition-colors flex items-center gap-1"
+                >
+                  <Check className="w-3 h-3" />
+                  Confirm All Manual Entries ({manualEntryCount})
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Needs Review items (matched tab) */}
         {activeTab === 'matched' &&
           (pagedItems as typeof filteredMatched).map((m) => (
             <SapInvoiceRow
@@ -577,6 +729,9 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
               overrides={overrides.get(m.etl.groupKey)}
               onOverride={handleOverride}
               persistedOverride={analysis.overrides?.[m.etl.groupKey]}
+              reviewReasons={m.reviewReasons}
+              suggestion={m.suggestion}
+              onConfirm={handleConfirm}
             />
           ))}
 
@@ -604,7 +759,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
             />
           ))}
 
-        {currentItems.length === 0 && (
+        {currentItems.length === 0 && !(activeTab === 'matched' && confirmed.length > 0 && filteredMatched.length === 0) && (
           <div className="text-center py-12 text-slate-500">
             <p className="font-medium">No results found</p>
             <p className="text-sm mt-1">Try adjusting your search or filters.</p>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   Database,
   Loader2,
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { SapImportAnalysis } from '@/lib/etl/types';
 import { SapMatchResults } from './SapMatchResults';
+import { classifyAllMatches } from '@/lib/etl/classify-match';
 
 type TabState = 'idle' | 'fetching' | 'done' | 'error';
 
@@ -39,6 +40,11 @@ export function SapImportTab() {
   const [error, setError] = useState<string>('');
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [activeResultTab, setActiveResultTab] = useState<ResultTab>('matched');
+
+  const { confirmed, needsReview } = useMemo(
+    () => analysis ? classifyAllMatches(analysis.matched, analysis.overrides || {}, analysis.vendorProfiles) : { confirmed: [], needsReview: [] },
+    [analysis]
+  );
 
   const fetchSapData = useCallback(async () => {
     setState('fetching');
@@ -213,8 +219,14 @@ export function SapImportTab() {
               <div className="text-2xl font-bold text-slate-800">
                 {analysis.matched.length}
               </div>
-              <div className="text-xs text-slate-500 mt-0.5">
-                existing invoices found
+              <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
+                <span className="text-green-600">{confirmed.length} confirmed</span>
+                {needsReview.length > 0 && (
+                  <>
+                    <span className="text-slate-300">|</span>
+                    <span className="text-amber-600 font-medium">{needsReview.length} need review</span>
+                  </>
+                )}
               </div>
             </button>
 
