@@ -57,6 +57,11 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [page, setPage] = useState(1);
 
+  // Reset page when parent drives tab switch via summary card
+  useEffect(() => {
+    setPage(1);
+  }, [activeTabOverride]);
+
   // Selection state per tab
   const [selectedMatched, setSelectedMatched] = useState<Set<string>>(new Set());
   const [selectedNew, setSelectedNew] = useState<Set<string>>(new Set());
