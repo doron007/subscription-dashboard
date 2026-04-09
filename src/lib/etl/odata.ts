@@ -1,6 +1,6 @@
 // ─── OData SAP GL Fetching ──────────────────────────────────────────────────
 
-import type { SAPRow, ODataCredentials } from './types';
+import type { SAPRow, ODataCredentials, MonitoringInvoice } from './types';
 import { parseSAPAmount, parseSAPDate, parseODataEpoch, parseRawAmount } from './parsers';
 
 /**
@@ -11,7 +11,7 @@ export async function fetchODataLive(credentials: ODataCredentials): Promise<SAP
   const { baseUrl, username, password, year } = credentials;
 
   // Build OData query URL with parameters in code (avoids $ escaping issues in .env)
-  const selectFields = 'TBUS_PART_UUID,CNOTE_IT,COFF_BUSPARTNER,COFF_OPD_F_ID,COPDREF_F_ID,CPOSTING_DATE,KCCREDIT_CURRCOMP,KCDEBIT_CURRCOMP';
+  const selectFields = 'TBUS_PART_UUID,C1ACC_DOC_UUIDsOEDPARTNER,CNOTE_IT,COFF_BUSPARTNER,COFF_OPD_F_ID,COPDREF_F_ID,CPOSTING_DATE,KCCREDIT_CURRCOMP,KCDEBIT_CURRCOMP';
   const filterYear = year || new Date().getFullYear();
   const dateFilter = `CPOSTING_DATE ge datetime'${filterYear}-01-01T00:00:00'`;
 
@@ -98,9 +98,88 @@ function parseODataResults(results: Record<string, any>[]): SAPRow[] {
       offsetSupplier: String(row['COFF_BUSPARTNER'] || row['OFFSET_SUPPLIER'] || row['OffsetCustomerSupplier'] || '').trim(),
       offsetDocId: String(row['COFF_OPD_F_ID'] || row['OFFSET_DOC_ID'] || row['OffsetOperationalDocID'] || '').trim(),
       operationalDocId: String(row['COPDREF_F_ID'] || row['OPERATIONAL_DOC_ID'] || row['OperationalDocID'] || '').trim(),
+      externalReference: String(row['C1ACC_DOC_UUIDsOEDPARTNER'] || '').trim(),
       debitAmount,
       creditAmount,
       rawRow: row,
+    };
+  });
+}
+
+// ─── Query 2: Monitoring Invoices ──────────────────────────────────────────
+
+export interface MonitoringCredentials {
+  monitoringUrl: string;  // Full base URL for the monitoring report
+  username: string;
+  password: string;
+  year?: number;
+}
+
+/**
+ * Fetch SAP Monitoring Invoices (Query 2) for payment status cross-reference.
+ * Filtered by IT cost centers (SEF, DW, OSO).
+ * Returns empty array if monitoringUrl is not configured (graceful degradation).
+ */
+export async function fetchMonitoringInvoices(credentials: MonitoringCredentials): Promise<MonitoringInvoice[]> {
+  const { monitoringUrl, username, password, year } = credentials;
+
+  if (!monitoringUrl) return [];
+
+  const selectFields = 'CREF_PO,CITEM_DESCR,CINVOICE_UUID,CREF_CIV,CTRANSACT_DATE,TLIFE_CYCLE_ST,TSELLER,CSELLER,KCINVOCIED_GROSS_VALUE,KCINVOCIED_NET_VALUE,KCTAX_AMOUNT';
+  const filterYear = year || new Date().getFullYear();
+  const costCenterFilter = "(CCOST_CENTER eq 'SEF.OPCO.GB.IT' or CCOST_CENTER eq 'DW.GB.IT' or CCOST_CENTER eq 'OSO.GB.IT')";
+  const dateFilter = `CTRANSACT_DATE ge datetime'${filterYear}-01-01T00:00:00'`;
+  const filter = `${costCenterFilter} and (${dateFilter})`;
+
+  const hasParams = monitoringUrl.includes('?');
+  const url = hasParams
+    ? monitoringUrl
+    : `${monitoringUrl}?$select=${selectFields}&$filter=${encodeURIComponent(filter)}&$top=10000000&$format=json`;
+
+  const authHeader = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': authHeader,
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Monitoring Invoices fetch failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const results = data.d?.results || data.d || [];
+
+  return parseMonitoringResults(results);
+}
+
+/**
+ * Parse Monitoring Invoice OData results into MonitoringInvoice[].
+ */
+function parseMonitoringResults(results: Record<string, any>[]): MonitoringInvoice[] {
+  return results.map(row => {
+    let postingDate = '';
+    const rawDate = row['CTRANSACT_DATE'] || '';
+    if (typeof rawDate === 'string' && rawDate.includes('/Date(')) {
+      postingDate = parseODataEpoch(rawDate);
+    } else if (typeof rawDate === 'string') {
+      postingDate = parseSAPDate(rawDate) || rawDate.substring(0, 10);
+    }
+
+    return {
+      purchaseOrderId: String(row['CREF_PO'] || '').trim(),
+      itemDescription: String(row['CITEM_DESCR'] || '').trim(),
+      invoiceId: String(row['CINVOICE_UUID'] || '').trim(),
+      externalDocId: String(row['CREF_CIV'] || '').trim(),
+      postingDate,
+      lifecycleStatus: String(row['TLIFE_CYCLE_ST'] || '').trim(),
+      supplierName: String(row['TSELLER'] || '').trim(),
+      supplierId: String(row['CSELLER'] || '').trim(),
+      grossAmount: parseRawAmount(String(row['KCINVOCIED_GROSS_VALUE'] || '0')),
+      netAmount: parseRawAmount(String(row['KCINVOCIED_NET_VALUE'] || '0')),
+      taxAmount: parseRawAmount(String(row['KCTAX_AMOUNT'] || '0')),
     };
   });
 }

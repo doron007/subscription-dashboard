@@ -2,9 +2,26 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Save, AlertTriangle, Trash2, CheckCircle2 } from 'lucide-react';
-import type { ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride, ReviewReason } from '@/lib/etl/types';
+import type { ETLInvoice, SupabaseInvoice, InvoiceOverrides, ETLOverride, ReviewReason, PaymentStatus } from '@/lib/etl/types';
 import { formatReviewReason } from '@/lib/etl/classify-match';
 import type { MatchedItem } from '@/lib/etl/types';
+
+const PAYMENT_STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
+  'Paid': { bg: 'bg-green-100', text: 'text-green-700', label: 'Paid' },
+  'Not Paid': { bg: 'bg-red-100', text: 'text-red-700', label: 'Not Paid' },
+  'Cancelled': { bg: 'bg-slate-100', text: 'text-slate-600', label: 'Cancelled' },
+  'Unknown': { bg: 'bg-amber-50', text: 'text-amber-600', label: 'Unknown' },
+};
+
+function PaymentStatusBadge({ status }: { status?: PaymentStatus }) {
+  if (!status) return null;
+  const config = PAYMENT_STATUS_CONFIG[status] || PAYMENT_STATUS_CONFIG['Unknown'];
+  return (
+    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${config.bg} ${config.text}`}>
+      {config.label}
+    </span>
+  );
+}
 
 interface SapInvoiceRowProps {
   etlInvoice: ETLInvoice;
@@ -139,6 +156,7 @@ export function SapInvoiceRow({
               {etlInvoice.supabaseVendor || etlInvoice.sapVendor}
             </span>
             <MatchBadge matchType={badgeType} />
+            <PaymentStatusBadge status={overrides?.paymentStatusOverride || etlInvoice.paymentStatus} />
             {reviewReasons && reviewReasons.length > 0 && reviewReasons.map((reason) => (
               <span
                 key={reason}
@@ -239,6 +257,19 @@ export function SapInvoiceRow({
                       {m.substring(0, 7)}
                     </option>
                   ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-slate-600 font-medium">Payment:</label>
+                <select
+                  value={overrides?.paymentStatusOverride || etlInvoice.paymentStatus || 'Unknown'}
+                  onChange={(e) => handleOverride({ paymentStatusOverride: e.target.value as PaymentStatus })}
+                  className="border border-slate-300 rounded px-2 py-1 text-sm bg-white focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+                >
+                  <option value="Paid">Paid</option>
+                  <option value="Not Paid">Not Paid</option>
+                  <option value="Cancelled">Cancelled</option>
+                  <option value="Unknown">Unknown</option>
                 </select>
               </div>
               {matchType === 'MONTHLY_TOTAL' && supabaseGroup && (

@@ -53,6 +53,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
   };
   const [searchQuery, setSearchQuery] = useState('');
   const [matchTypeFilter, setMatchTypeFilter] = useState<string>('all');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<SortField>('vendor');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [page, setPage] = useState(1);
@@ -76,6 +77,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
           billingMonth: ov.billingMonthOverride,
           importAction: ov.importAction as InvoiceOverrides['importAction'],
           amountOverride: ov.amountOverride,
+          paymentStatusOverride: ov.paymentStatusOverride,
         });
       }
     }
@@ -105,6 +107,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
           amountOverride: ov.amountOverride || null,
           importAction: ov.importAction || 'PENDING',
           sapAmount: etl.computedAmount !== etl.rawAmount ? etl.computedAmount : etl.rawAmount,
+          paymentStatusOverride: ov.paymentStatusOverride || null,
         }),
       }).catch(err => console.error('Failed to persist override:', err));
     }, 500);
@@ -259,6 +262,10 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
       items = items.filter((m) => m.matchType === matchTypeFilter);
     }
 
+    if (paymentStatusFilter !== 'all') {
+      items = items.filter((m) => (m.etl.paymentStatus || 'Unknown') === paymentStatusFilter);
+    }
+
     items.sort((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1;
       switch (sortField) {
@@ -278,7 +285,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     });
 
     return items;
-  }, [needsReview, searchQuery, matchTypeFilter, sortField, sortDir]);
+  }, [needsReview, searchQuery, matchTypeFilter, paymentStatusFilter, sortField, sortDir]);
 
   // Filtered + sorted new results
   const filteredNew = useMemo(() => {
@@ -291,6 +298,10 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
           inv.supabaseVendor?.toLowerCase().includes(q) ||
           inv.sapVendor.toLowerCase().includes(q)
       );
+    }
+
+    if (paymentStatusFilter !== 'all') {
+      items = items.filter((inv) => (inv.paymentStatus || 'Unknown') === paymentStatusFilter);
     }
 
     items.sort((a, b) => {
@@ -308,7 +319,7 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
     });
 
     return items;
-  }, [analysis.newInvoices, searchQuery, sortField, sortDir]);
+  }, [analysis.newInvoices, searchQuery, paymentStatusFilter, sortField, sortDir]);
 
   // Filtered supabase-only
   const filteredSupabaseOnly = useMemo(() => {
@@ -559,6 +570,23 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
               <option value="CLOSE">Close</option>
               <option value="MONTH_MATCH">Month Match</option>
               <option value="MONTHLY_TOTAL">Monthly Total</option>
+            </select>
+          </div>
+        )}
+
+        {/* Payment status filter */}
+        {activeTab !== 'supabase-only' && (
+          <div className="flex items-center gap-2">
+            <select
+              value={paymentStatusFilter}
+              onChange={(e) => { setPaymentStatusFilter(e.target.value); resetPage(); }}
+              className="text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500"
+            >
+              <option value="all">All Payment Status</option>
+              <option value="Paid">Paid</option>
+              <option value="Not Paid">Not Paid</option>
+              <option value="Cancelled">Cancelled</option>
+              <option value="Unknown">Unknown</option>
             </select>
           </div>
         )}

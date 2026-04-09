@@ -62,6 +62,7 @@ export interface Invoice {
     totalAmount: number;
     currency: string;
     status: 'Paid' | 'Pending' | 'Overdue';
+    paymentStatus?: 'Paid' | 'Not Paid' | 'Cancelled' | 'Unknown' | null;
     fileUrl?: string;
     lineItems?: InvoiceLineItem[];
 }

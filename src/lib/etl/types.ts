@@ -1,5 +1,7 @@
 // ─── SAP ETL Types ──────────────────────────────────────────────────────────
 
+export type PaymentStatus = 'Paid' | 'Not Paid' | 'Cancelled' | 'Unknown';
+
 export interface SAPRow {
   postingDate: string;       // ISO date
   businessPartner: string;
@@ -7,9 +9,26 @@ export interface SAPRow {
   offsetSupplier: string;    // Offset Customer / Supplier ID
   offsetDocId: string;       // Offset Operational Document ID
   operationalDocId: string;  // Operational Document ID
+  externalReference: string; // C1ACC_DOC_UUIDsOEDPARTNER (External Reference)
   debitAmount: number;
   creditAmount: number;
   rawRow: Record<string, string>;
+}
+
+// ─── Monitoring Invoices (Query 2) ─────────────────────────────────────────
+
+export interface MonitoringInvoice {
+  purchaseOrderId: string;    // CREF_PO
+  itemDescription: string;    // CITEM_DESCR
+  invoiceId: string;          // CINVOICE_UUID
+  externalDocId: string;      // CREF_CIV
+  postingDate: string;        // CTRANSACT_DATE
+  lifecycleStatus: string;    // TLIFE_CYCLE_ST
+  supplierName: string;       // TSELLER
+  supplierId: string;         // CSELLER
+  grossAmount: number;        // KCINVOCIED_GROSS_VALUE
+  netAmount: number;          // KCINVOCIED_NET_VALUE
+  taxAmount: number;          // KCTAX_AMOUNT
 }
 
 export type RowClassification =
@@ -37,6 +56,7 @@ export interface ETLInvoice {
   computedAmount: number;    // After reversing cost allocations
   allocationNote: string;
   lineItems: ClassifiedRow[];
+  paymentStatus?: PaymentStatus;  // From Monitoring Invoices cross-reference
 }
 
 export interface SupabaseLineItem {
@@ -64,6 +84,7 @@ export interface InvoiceOverrides {
   billingMonth?: string;
   importAction?: 'UPDATE' | 'CREATE' | 'SKIP' | 'CONFIRM';
   amountOverride?: number;
+  paymentStatusOverride?: PaymentStatus;
 }
 
 export interface MatchResult {
@@ -111,6 +132,7 @@ export interface ETLOverride {
   notes?: string;
   importedAt?: string;
   conflict?: boolean;      // computed: true when sapAmount differs from current ETL amount
+  paymentStatusOverride?: PaymentStatus;  // User override for payment status
   createdAt: string;
   updatedAt: string;
 }
@@ -135,6 +157,8 @@ export interface SapImportAnalysis {
     etlInvoiceCount: number;
     dataYear: number;
     fetchDurationMs: number;
+    monitoringInvoiceCount?: number;
+    paymentStatusSummary?: Record<string, number>;  // e.g. { Paid: 23, 'Not Paid': 4, Unknown: 2 }
   };
   matched: { etl: ETLInvoice; supabase: SupabaseInvoice; supabaseGroup?: SupabaseInvoice[]; matchType: 'EXACT' | 'CLOSE' | 'MONTH_MATCH' | 'MONTHLY_TOTAL'; amountDiff: number }[];
   newInvoices: ETLInvoice[];

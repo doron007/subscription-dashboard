@@ -1059,6 +1059,7 @@ export const db = {
                     total_amount: invoice.totalAmount,
                     currency: invoice.currency || 'USD',
                     status: invoice.status || 'Pending',
+                    payment_status: invoice.paymentStatus || null,
                     file_url: invoice.fileUrl
                 })
                 .select()
@@ -1075,6 +1076,7 @@ export const db = {
                 totalAmount: data.total_amount,
                 currency: data.currency,
                 status: data.status,
+                paymentStatus: data.payment_status || null,
                 fileUrl: data.file_url
             };
         },
@@ -1123,6 +1125,7 @@ export const db = {
                 totalAmount: data.total_amount,
                 currency: data.currency,
                 status: data.status,
+                paymentStatus: data.payment_status || null,
                 fileUrl: data.file_url
             };
         },
@@ -1153,6 +1156,7 @@ export const db = {
                     totalAmount: row.total_amount,
                     currency: row.currency,
                     status: row.status,
+                    paymentStatus: row.payment_status || null,
                     fileUrl: row.file_url
                 });
             }
@@ -1213,6 +1217,7 @@ export const db = {
             if (invoice.totalAmount !== undefined) updatePayload.total_amount = invoice.totalAmount;
             if (invoice.currency !== undefined) updatePayload.currency = invoice.currency;
             if (invoice.status !== undefined) updatePayload.status = invoice.status;
+            if (invoice.paymentStatus !== undefined) updatePayload.payment_status = invoice.paymentStatus;
             if (invoice.dueDate !== undefined) updatePayload.due_date = invoice.dueDate;
 
             const { data, error } = await supabase
@@ -1236,6 +1241,7 @@ export const db = {
                 totalAmount: data.total_amount,
                 currency: data.currency,
                 status: data.status,
+                paymentStatus: data.payment_status || null,
                 fileUrl: data.file_url
             };
         },
@@ -1294,6 +1300,7 @@ export const db = {
                 totalAmount: parseFloat(row.total_amount) || 0,
                 currency: row.currency,
                 status: row.status,
+                paymentStatus: row.payment_status || null,
                 fileUrl: row.file_url,
                 vendorName: row.vendor?.name
             }));
@@ -1321,6 +1328,7 @@ export const db = {
                 totalAmount: parseFloat(row.total_amount) || 0,
                 currency: row.currency,
                 status: row.status,
+                paymentStatus: row.payment_status || null,
                 fileUrl: row.file_url
             }));
         },
@@ -1347,6 +1355,7 @@ export const db = {
                 totalAmount: parseFloat(row.total_amount) || 0,
                 currency: row.currency,
                 status: row.status,
+                paymentStatus: row.payment_status || null,
                 fileUrl: row.file_url
             }));
         },

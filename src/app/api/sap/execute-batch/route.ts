@@ -180,6 +180,7 @@ export async function POST(request: Request) {
               total_amount: effectiveAmount,
               currency: 'USD',
               status: 'Paid',
+              payment_status: etlInvoice.paymentStatus || null,
             })
             .select('id')
             .single();
@@ -220,6 +221,7 @@ export async function POST(request: Request) {
             .update({
               total_amount: effectiveAmount,
               invoice_date: effectiveBillingMonth,
+              payment_status: etlInvoice.paymentStatus || null,
             })
             .eq('id', action.targetInvoiceId);
 

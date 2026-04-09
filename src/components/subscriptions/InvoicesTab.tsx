@@ -299,6 +299,13 @@ export function InvoicesTab({ subscriptionId }: InvoicesTabProps) {
         'Overdue': 'bg-red-100 text-red-700'
     };
 
+    const paymentStatusColors: Record<string, string> = {
+        'Paid': 'bg-green-100 text-green-700',
+        'Not Paid': 'bg-red-100 text-red-700',
+        'Cancelled': 'bg-slate-100 text-slate-600',
+        'Unknown': 'bg-amber-50 text-amber-600',
+    };
+
     return (
         <div className="space-y-2">
             {invoices.map((invoice) => (
@@ -353,6 +360,37 @@ export function InvoicesTab({ subscriptionId }: InvoicesTabProps) {
                                 </select>
                                 <ChevronDown className={`w-3 h-3 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${invoice.status === 'Paid' ? 'text-green-700' : invoice.status === 'Pending' ? 'text-amber-700' : 'text-red-700'}`} />
                             </div>
+
+                            {invoice.paymentStatus && (
+                                <div className="relative group" onClick={(e) => e.stopPropagation()}>
+                                    <select
+                                        value={invoice.paymentStatus}
+                                        onChange={async (e) => {
+                                            const newPaymentStatus = e.target.value as Invoice['paymentStatus'];
+
+                                            setInvoices(prev => prev.map(inv =>
+                                                inv.id === invoice.id ? { ...inv, paymentStatus: newPaymentStatus } : inv
+                                            ));
+
+                                            try {
+                                                await subscriptionService.updateInvoice(invoice.id, { paymentStatus: newPaymentStatus });
+                                            } catch (error) {
+                                                console.error('Failed to update payment status:', error);
+                                                setInvoices(prev => prev.map(inv =>
+                                                    inv.id === invoice.id ? { ...inv, paymentStatus: invoice.paymentStatus } : inv
+                                                ));
+                                            }
+                                        }}
+                                        className={`appearance-none cursor-pointer pl-2 pr-6 py-0.5 rounded-full text-xs font-medium border-0 focus:ring-1 focus:ring-offset-1 focus:ring-indigo-500 ${paymentStatusColors[invoice.paymentStatus] || 'bg-slate-100 text-slate-600'}`}
+                                    >
+                                        <option value="Paid">Paid</option>
+                                        <option value="Not Paid">Not Paid</option>
+                                        <option value="Cancelled">Cancelled</option>
+                                        <option value="Unknown">Unknown</option>
+                                    </select>
+                                    <ChevronDown className={`w-3 h-3 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${paymentStatusColors[invoice.paymentStatus]?.includes('green') ? 'text-green-700' : paymentStatusColors[invoice.paymentStatus]?.includes('red') ? 'text-red-700' : 'text-slate-600'}`} />
+                                </div>
+                            )}
 
                             <button
                                 onClick={(e) => handleDeleteClick(e, invoice.id)}

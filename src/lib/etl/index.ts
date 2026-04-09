@@ -4,4 +4,6 @@ export { VendorMatcher, BP_TO_SUPABASE, SB_VENDOR_PATTERNS, DESC_VENDOR_PATTERNS
 export { classifyRows, deriveBillingMonth } from './classify';
 export { reconstructInvoices } from './reconstruct';
 export { matchInvoices } from './match';
-export { fetchODataLive, parseODataJSON } from './odata';
+export { fetchODataLive, parseODataJSON, fetchMonitoringInvoices } from './odata';
+export type { MonitoringCredentials } from './odata';
+export { resolvePaymentStatus } from './payment-status';

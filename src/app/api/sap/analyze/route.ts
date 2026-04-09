@@ -3,12 +3,15 @@ import { createClient } from '@supabase/supabase-js';
 import { requireAuth } from '@/lib/api-auth';
 import {
   fetchODataLive,
+  fetchMonitoringInvoices,
+  resolvePaymentStatus,
   classifyRows,
   reconstructInvoices,
   matchInvoices,
   VendorMatcher,
   type SupabaseInvoice,
   type SapImportAnalysis,
+  type PaymentStatus,
 } from '@/lib/etl';
 
 /**
@@ -56,11 +59,28 @@ export async function POST(request: Request) {
     const matcher = new VendorMatcher();
     matcher.build((vendors || []).map((v: { name: string }) => v.name));
 
-    // --- Step 2: Fetch SAP OData GL rows ---
+    // --- Step 2: Fetch SAP OData GL rows + Monitoring Invoices in parallel ---
+    const monitoringUrl = process.env.SAP_ODATA_MONITORING_URL;
     const fetchStart = Date.now();
     let sapRows;
+    let monitoringInvoices: import('@/lib/etl').MonitoringInvoice[] = [];
     try {
-      sapRows = await fetchODataLive({ baseUrl, username, password, year: dataYear });
+      const fetchPromises: [ReturnType<typeof fetchODataLive>, ...Promise<any>[]] = [
+        fetchODataLive({ baseUrl, username, password, year: dataYear }),
+      ];
+      // Only fetch monitoring invoices if URL is configured (graceful degradation)
+      if (monitoringUrl) {
+        fetchPromises.push(
+          fetchMonitoringInvoices({ monitoringUrl, username, password, year: dataYear })
+            .catch(err => {
+              console.warn('Monitoring Invoices fetch failed (non-fatal):', err);
+              return [] as import('@/lib/etl').MonitoringInvoice[];
+            })
+        );
+      }
+      const results = await Promise.all(fetchPromises);
+      sapRows = results[0];
+      if (results[1]) monitoringInvoices = results[1];
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return NextResponse.json(
@@ -82,7 +102,12 @@ export async function POST(request: Request) {
     }
 
     // --- Step 4: Reconstruct invoices ---
-    const etlInvoices = reconstructInvoices(classified);
+    const rawEtlInvoices = reconstructInvoices(classified);
+
+    // --- Step 4b: Resolve payment status from Monitoring Invoices ---
+    const { invoices: etlInvoices, warnings: paymentWarnings } = resolvePaymentStatus(
+      rawEtlInvoices, monitoringInvoices
+    );
 
     // --- Step 5: Query Supabase invoices for the target year ---
     // Include prior year Q4 to catch cross-year matches (e.g., Dec 2025 service posted in Jan 2026)
@@ -192,9 +217,15 @@ export async function POST(request: Request) {
         notes: row.notes || undefined,
         importedAt: row.imported_at || undefined,
         conflict,
+        paymentStatusOverride: row.payment_status_override || undefined,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       };
+
+      // Apply payment status override — user decision takes precedence over ETL
+      if (row.payment_status_override && etl) {
+        etl.paymentStatus = row.payment_status_override as PaymentStatus;
+      }
     }
 
     // --- Step 7: Compute vendor profiles from DB invoices ---
@@ -223,7 +254,7 @@ export async function POST(request: Request) {
     }
 
     // --- Build warnings ---
-    const warnings: string[] = [];
+    const warnings: string[] = [...paymentWarnings];
     if (sapRows.length === 0) {
       warnings.push('No rows returned from SAP OData. Check credentials and endpoint URL.');
     }
@@ -234,6 +265,16 @@ export async function POST(request: Request) {
     if (conflictCount > 0) {
       warnings.push(`${conflictCount} override(s) have conflicts — SAP amounts changed since your last decision.`);
     }
+    if (!monitoringUrl) {
+      warnings.push('SAP_ODATA_MONITORING_URL is not configured — payment status unavailable.');
+    }
+
+    // Build payment status summary from all ETL invoices
+    const paymentStatusSummary: Record<string, number> = {};
+    for (const inv of etlInvoices) {
+      const status = inv.paymentStatus || 'Unknown';
+      paymentStatusSummary[status] = (paymentStatusSummary[status] || 0) + 1;
+    }
 
     const analysis: SapImportAnalysis = {
       sapMeta: {
@@ -242,6 +283,8 @@ export async function POST(request: Request) {
         etlInvoiceCount: etlInvoices.length,
         dataYear,
         fetchDurationMs,
+        monitoringInvoiceCount: monitoringInvoices.length,
+        paymentStatusSummary,
       },
       matched,
       newInvoices,

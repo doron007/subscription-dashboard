@@ -50,6 +50,7 @@ function parseCSV(filePath: string): SAPRow[] {
     offsetSupplier: (row['Offset Customer / Supplier ID'] || '').trim(),
     offsetDocId: (row['Offset Operational Document ID'] || '').trim(),
     operationalDocId: (row['Operational Document ID'] || '').trim(),
+    externalReference: (row['External Reference'] || '').trim(),
     debitAmount: parseSAPAmount(row['Debit Amount Company Currency'] || ''),
     creditAmount: parseSAPAmount(row['Credit Amount Company Currency'] || ''),
     rawRow: row,
