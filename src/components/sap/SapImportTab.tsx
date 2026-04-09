@@ -40,6 +40,7 @@ export function SapImportTab() {
   const [error, setError] = useState<string>('');
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [activeResultTab, setActiveResultTab] = useState<ResultTab>('matched');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string | undefined>(undefined);
 
   const { confirmed, needsReview } = useMemo(
     () => analysis ? classifyAllMatches(analysis.matched, analysis.overrides || {}, analysis.vendorProfiles) : { confirmed: [], needsReview: [] },
@@ -207,7 +208,7 @@ export function SapImportTab() {
             </div>
 
             <button
-              onClick={() => setActiveResultTab('matched')}
+              onClick={() => { setActiveResultTab('matched'); setPaymentStatusFilter(undefined); }}
               className={`bg-white p-4 rounded-xl shadow-sm border-2 text-left transition-all hover:shadow-md ${
                 activeResultTab === 'matched' ? 'border-green-500 ring-1 ring-green-200' : 'border-slate-200 hover:border-green-300'
               }`}
@@ -231,7 +232,7 @@ export function SapImportTab() {
             </button>
 
             <button
-              onClick={() => setActiveResultTab('new')}
+              onClick={() => { setActiveResultTab('new'); setPaymentStatusFilter(undefined); }}
               className={`bg-white p-4 rounded-xl shadow-sm border-2 text-left transition-all hover:shadow-md ${
                 activeResultTab === 'new' ? 'border-teal-500 ring-1 ring-teal-200' : 'border-slate-200 hover:border-teal-300'
               }`}
@@ -249,7 +250,7 @@ export function SapImportTab() {
             </button>
 
             <button
-              onClick={() => setActiveResultTab('supabase-only')}
+              onClick={() => { setActiveResultTab('supabase-only'); setPaymentStatusFilter(undefined); }}
               className={`bg-white p-4 rounded-xl shadow-sm border-2 text-left transition-all hover:shadow-md ${
                 activeResultTab === 'supabase-only' ? 'border-slate-500 ring-1 ring-slate-200' : 'border-slate-200 hover:border-slate-300'
               }`}
@@ -275,9 +276,25 @@ export function SapImportTab() {
                 <div>
                   <div className="text-sm font-medium text-amber-800">Warnings</div>
                   <ul className="text-sm text-amber-700 mt-1 space-y-1">
-                    {analysis.warnings.slice(0, 5).map((w, i) => (
-                      <li key={i}>{w}</li>
-                    ))}
+                    {analysis.warnings.slice(0, 5).map((w, i) => {
+                      const isPaymentWarning = w.includes('no payment status match');
+                      return (
+                        <li key={i} className={isPaymentWarning ? 'flex items-center gap-2' : ''}>
+                          <span>{w}</span>
+                          {isPaymentWarning && (
+                            <button
+                              onClick={() => {
+                                setActiveResultTab('matched');
+                                setPaymentStatusFilter('Unknown');
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-200 text-amber-900 hover:bg-amber-300 transition-colors whitespace-nowrap"
+                            >
+                              Show Unknown <ArrowRight className="w-3 h-3" />
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
                     {analysis.warnings.length > 5 && (
                       <li className="text-amber-600">
                         ...and {analysis.warnings.length - 5} more
@@ -313,6 +330,8 @@ export function SapImportTab() {
             }}
             activeTabOverride={activeResultTab}
             onTabChange={setActiveResultTab}
+            paymentStatusFilterOverride={paymentStatusFilter}
+            onPaymentStatusFilterChange={(val) => setPaymentStatusFilter(val === 'all' ? undefined : val)}
           />
         </>
       )}

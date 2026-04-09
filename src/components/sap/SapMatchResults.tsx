@@ -35,6 +35,8 @@ interface SapMatchResultsProps {
   onAnalysisUpdate?: (updated: Partial<SapImportAnalysis>) => void;
   activeTabOverride?: ResultTab;
   onTabChange?: (tab: ResultTab) => void;
+  paymentStatusFilterOverride?: string;
+  onPaymentStatusFilterChange?: (filter: string) => void;
 }
 
 function formatCurrency(amount: number): string {
@@ -44,7 +46,7 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeTabOverride, onTabChange }: SapMatchResultsProps) {
+export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeTabOverride, onTabChange, paymentStatusFilterOverride, onPaymentStatusFilterChange }: SapMatchResultsProps) {
   const [internalTab, setInternalTab] = useState<ResultTab>('matched');
   const activeTab = activeTabOverride ?? internalTab;
   const setActiveTab = (tab: ResultTab) => {
@@ -53,15 +55,20 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
   };
   const [searchQuery, setSearchQuery] = useState('');
   const [matchTypeFilter, setMatchTypeFilter] = useState<string>('all');
-  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('all');
+  const [internalPaymentStatusFilter, setInternalPaymentStatusFilter] = useState<string>('all');
+  const paymentStatusFilter = paymentStatusFilterOverride ?? internalPaymentStatusFilter;
+  const setPaymentStatusFilter = (val: string) => {
+    setInternalPaymentStatusFilter(val);
+    onPaymentStatusFilterChange?.(val);
+  };
   const [sortField, setSortField] = useState<SortField>('vendor');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [page, setPage] = useState(1);
 
-  // Reset page when parent drives tab switch via summary card
+  // Reset page when parent drives tab or filter switch
   useEffect(() => {
     setPage(1);
-  }, [activeTabOverride]);
+  }, [activeTabOverride, paymentStatusFilterOverride]);
 
   // Selection state per tab
   const [selectedMatched, setSelectedMatched] = useState<Set<string>>(new Set());
