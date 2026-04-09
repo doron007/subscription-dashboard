@@ -160,7 +160,8 @@ az containerapp update \
     --set-env-vars \
         "SUPABASE_SERVICE_ROLE_KEY=secretref:supabase-service-role-key" \
         "OPENROUTER_API_KEY=secretref:openrouter-api-key" \
-        "NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL"
+        "NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL" \
+        "SAP_ODATA_MONITORING_URL=$SAP_ODATA_MONITORING_URL"
 
 # Output summary
 echo ""
@@ -174,6 +175,7 @@ echo "  - NEXT_PUBLIC_SUPABASE_ANON_KEY (build-time)"
 echo "  - NEXT_PUBLIC_APP_URL (build-time)"
 echo "  - SUPABASE_SERVICE_ROLE_KEY (secret)"
 echo "  - OPENROUTER_API_KEY (secret)"
+echo "  - SAP_ODATA_MONITORING_URL (env var)"
 echo ""
 echo "To rollback: az containerapp update --name $APP_NAME --resource-group $RESOURCE_GROUP --image $ACR_SERVER/$IMAGE_NAME:<version>"
 echo "To view logs: az containerapp logs show --name $APP_NAME --resource-group $RESOURCE_GROUP --follow"
