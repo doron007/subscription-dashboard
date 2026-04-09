@@ -280,6 +280,27 @@ export function SapInvoiceRow({
             </div>
           )}
 
+          {/* Payment status override only (for confirmed items with Unknown status) */}
+          {onOverride && readOnly && (
+            <div className="bg-amber-50/50 px-4 py-2.5 border-b border-amber-200 flex items-center gap-3 text-sm">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+              <span className="text-amber-700 text-xs">Payment status could not be determined automatically.</span>
+              <div className="flex items-center gap-2 ml-auto">
+                <label className="text-slate-600 font-medium">Set Payment Status:</label>
+                <select
+                  value={overrides?.paymentStatusOverride || etlInvoice.paymentStatus || 'Unknown'}
+                  onChange={(e) => handleOverride({ paymentStatusOverride: e.target.value as PaymentStatus })}
+                  className="border border-amber-300 rounded px-2 py-1 text-sm bg-white focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+                >
+                  <option value="Paid">Paid</option>
+                  <option value="Not Paid">Not Paid</option>
+                  <option value="Cancelled">Cancelled</option>
+                  <option value="Unknown">Unknown</option>
+                </select>
+              </div>
+            </div>
+          )}
+
           {/* SAP Line Items (collapsible) */}
           <div className="bg-slate-50/50">
             <button

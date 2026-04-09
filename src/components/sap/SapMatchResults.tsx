@@ -650,24 +650,34 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
       {/* Results list */}
       <div className="space-y-2">
         {/* Confirmed section (matched tab only) */}
-        {activeTab === 'matched' && confirmed.length > 0 && (
+        {activeTab === 'matched' && confirmed.length > 0 && (() => {
+          const isFilteringPaymentStatus = paymentStatusFilter !== 'all';
+          const filteredConfirmed = isFilteringPaymentStatus
+            ? confirmed.filter(m => (m.etl.paymentStatus || 'Unknown') === paymentStatusFilter)
+            : confirmed;
+          const isAutoExpanded = isFilteringPaymentStatus && filteredConfirmed.length > 0;
+          const showExpanded = confirmedExpanded || isAutoExpanded;
+          if (isFilteringPaymentStatus && filteredConfirmed.length === 0) return null;
+          return (
           <div className="rounded-lg border border-green-200 overflow-hidden">
             <button
               onClick={() => setConfirmedExpanded(!confirmedExpanded)}
               className="w-full flex items-center gap-3 px-4 py-2.5 bg-green-50 hover:bg-green-100/70 transition-colors text-left"
             >
-              {confirmedExpanded ? <ChevronDown className="w-4 h-4 text-green-600" /> : <ChevronRight className="w-4 h-4 text-green-600" />}
+              {showExpanded ? <ChevronDown className="w-4 h-4 text-green-600" /> : <ChevronRight className="w-4 h-4 text-green-600" />}
               <Check className="w-4 h-4 text-green-600" />
               <span className="text-sm font-medium text-green-800">
-                Confirmed &mdash; {confirmed.length} invoices
+                Confirmed &mdash; {filteredConfirmed.length}{isFilteringPaymentStatus ? ` of ${confirmed.length}` : ''} invoices
               </span>
               <span className="text-xs text-green-600 ml-1">
-                (previously imported, no action needed)
+                {isFilteringPaymentStatus
+                  ? `(filtered by ${paymentStatusFilter} payment status)`
+                  : '(previously imported, no action needed)'}
               </span>
             </button>
-            {confirmedExpanded && (
+            {showExpanded && (
               <div className="space-y-1 p-2 bg-green-50/30">
-                {confirmed.map((m) => (
+                {filteredConfirmed.map((m) => (
                   <SapInvoiceRow
                     key={m.etl.groupKey}
                     etlInvoice={m.etl}
@@ -678,13 +688,16 @@ export function SapMatchResults({ analysis, onRefetch, onAnalysisUpdate, activeT
                     isSelected={false}
                     onToggleSelect={() => {}}
                     readOnly
+                    overrides={overrides.get(m.etl.groupKey)}
+                    onOverride={handleOverride}
                     persistedOverride={analysis.overrides?.[m.etl.groupKey]}
                   />
                 ))}
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* Needs Review section header (matched tab only, when there are confirmed items too) */}
         {activeTab === 'matched' && confirmed.length > 0 && needsReview.length > 0 && (() => {
