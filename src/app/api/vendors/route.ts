@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
 
 /**
@@ -7,8 +7,9 @@ import { requireAuth } from '@/lib/api-auth';
  * Returns all vendors.
  */
 export async function GET() {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const vendors = await db.vendors.findAll();

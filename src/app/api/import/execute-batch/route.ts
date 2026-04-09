@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
 import { ensureRecentBackup } from '@/lib/backup';
 import { parseImportCSV, extractPeriodFromDescription, extractCleanServiceName } from '@/lib/import/parseCSV';
@@ -58,8 +58,9 @@ interface BatchRequest {
  * This endpoint is designed to be called multiple times for large imports.
  */
 export async function POST(request: Request) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const body = await request.json();

@@ -1,11 +1,10 @@
-import { createClient } from './supabase/client';
+import { SupabaseClient } from '@supabase/supabase-js';
 import type { Subscription, SubscriptionStatus, BillingCycle, PaymentMethod, Employee, Device, Assignment, Vendor, SubscriptionService, Invoice, InvoiceLineItem } from '../types';
 import { normalizeForMatching } from './import/parseCSV';
 
-// Create a singleton instance for client-side usage
-const supabase = createClient();
 
-export const db = {
+export function createDb(supabase: SupabaseClient) {
+  const db = {
     // --- Phase 6: New Entities ---
 
     vendors: {
@@ -2052,4 +2051,6 @@ export const db = {
             return true;
         }
     }
+  };
+  return db;
 }

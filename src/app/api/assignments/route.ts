@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
 
 /**
@@ -7,8 +7,9 @@ import { requireAuth } from '@/lib/api-auth';
  * Returns assignments for a subscription.
  */
 export async function GET(request: Request) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const { searchParams } = new URL(request.url);
     const subId = searchParams.get('subscriptionId');
@@ -30,8 +31,9 @@ export async function GET(request: Request) {
  * Creates a new seat assignment.
  */
 export async function POST(request: Request) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const body = await request.json();
@@ -47,8 +49,9 @@ export async function POST(request: Request) {
  * Removes a seat assignment.
  */
 export async function DELETE(request: Request) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { requireAdmin } from '@/lib/api-auth';
 
 /**
@@ -7,8 +7,9 @@ import { requireAdmin } from '@/lib/api-auth';
  * Returns preview of what will be moved during merge.
  */
 export async function GET(request: NextRequest) {
-    const { response } = await requireAdmin();
+    const { response, supabase } = await requireAdmin();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const { searchParams } = new URL(request.url);
     const sourceVendorId = searchParams.get('sourceVendorId');
@@ -30,8 +31,9 @@ export async function GET(request: NextRequest) {
  * Body: { sourceVendorId, targetVendorId, newName? }
  */
 export async function POST(request: NextRequest) {
-    const { response } = await requireAdmin();
+    const { response, supabase } = await requireAdmin();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const body = await request.json();
     const { sourceVendorId, targetVendorId, newName } = body;

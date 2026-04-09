@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { createClient } from '@/lib/supabase/client';
+import { createDb } from '@/lib/db';
 import { resolveBillingMonth, parsePeriodFromDescription } from '@/lib/periodParser';
 import { format } from 'date-fns';
 import { requireAuth } from '@/lib/api-auth';
@@ -10,12 +9,12 @@ import { requireAuth } from '@/lib/api-auth';
  * Returns all line items with invoice info and resolved billing month.
  */
 export async function GET() {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
-    const supabase = createClient();
     try {
-        const { data, error } = await supabase
+        const { data, error } = await supabase!
             .from('sub_invoice_line_items')
             .select(`
                 id,
@@ -84,8 +83,9 @@ export async function GET() {
  * Creates a new line item.
  */
 export async function POST(request: NextRequest) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const body = await request.json();
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { AnalyzedInvoice } from '@/lib/analysis/types';
 import { requireAuth } from '@/lib/api-auth';
 
@@ -8,8 +8,9 @@ import { requireAuth } from '@/lib/api-auth';
  * Returns all invoices.
  */
 export async function GET() {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const invoices = await db.invoices.findAll();
@@ -65,8 +66,9 @@ function sanitizeNumber(value: unknown): number {
  * Handles vendor creation, service aggregation, and line item processing.
  */
 export async function POST(request: Request) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const body = await request.json();

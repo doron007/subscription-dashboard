@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { requireAuth, requireAdmin } from '@/lib/api-auth';
 
 /**
@@ -10,8 +10,9 @@ export async function GET(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const lineItem = await db.lineItems.findById(params.id);
     if (!lineItem) {
@@ -28,8 +29,9 @@ export async function PUT(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const body = await request.json();
     const lineItem = await db.lineItems.update(params.id, body);
@@ -47,8 +49,9 @@ export async function DELETE(
     request: NextRequest,
     { params }: { params: { id: string } }
 ) {
-    const { response } = await requireAdmin();
+    const { response, supabase } = await requireAdmin();
     if (response) return response;
+    const db = createDb(supabase!);
 
     const success = await db.lineItems.delete(params.id);
     if (!success) {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
 
 /**
@@ -10,8 +10,9 @@ export async function GET(
     request: Request,
     { params }: { params: { id: string } }
 ) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const lineItems = await db.invoices.getLineItems(params.id);

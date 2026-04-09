@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createDb } from '@/lib/db';
 import { requireAuth } from '@/lib/api-auth';
 
 /**
@@ -7,8 +7,9 @@ import { requireAuth } from '@/lib/api-auth';
  * Returns all devices.
  */
 export async function GET() {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const data = await db.devices.findAll();
@@ -23,8 +24,9 @@ export async function GET() {
  * Creates a new device.
  */
 export async function POST(request: Request) {
-    const { response } = await requireAuth();
+    const { response, supabase } = await requireAuth();
     if (response) return response;
+    const db = createDb(supabase!);
 
     try {
         const body = await request.json();
