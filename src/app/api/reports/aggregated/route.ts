@@ -12,6 +12,7 @@ const LINE_ITEM_SELECT = `
     billing_month_override,
     invoice:sub_invoices!inner(
         invoice_date,
+        payment_status,
         subscription_id,
         vendor:sub_vendors(id, name)
     )
@@ -53,6 +54,7 @@ async function fetchAllLineItems(supabase: ReturnType<typeof getSupabaseAdmin>) 
  * - startDate: YYYY-MM-DD (required)
  * - endDate: YYYY-MM-DD (required)
  * - groupBy: 'vendor' | 'service' (default: 'vendor')
+ * - paymentStatus: comma-separated list (e.g. 'Paid,Not Paid')
  *
  * This moves expensive aggregation from client to server/database.
  */
@@ -64,6 +66,8 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     const groupBy = searchParams.get('groupBy') || 'vendor';
+    const paymentStatusParam = searchParams.get('paymentStatus');
+    const paymentStatusFilter = paymentStatusParam ? paymentStatusParam.split(',') : [];
 
     if (!startDate || !endDate) {
         return NextResponse.json(
@@ -101,6 +105,15 @@ export async function GET(request: NextRequest) {
             const invoice = item.invoice as any;
             const invoiceDate = invoice?.invoice_date;
             const vendor = Array.isArray(invoice?.vendor) ? invoice.vendor[0] : invoice?.vendor;
+
+            // Filter by payment status when filter is active
+            // NULL payment_status is treated as 'Unknown'
+            if (paymentStatusFilter.length > 0) {
+                const invoicePaymentStatus = invoice?.payment_status || 'Unknown';
+                if (!paymentStatusFilter.includes(invoicePaymentStatus)) {
+                    continue;
+                }
+            }
 
             // Resolve billing month using priority: override > period_start > invoice_date
             let billingMonth: string;

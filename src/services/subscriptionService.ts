@@ -268,8 +268,12 @@ export const subscriptionService = {
         startDate: string;
         endDate: string;
         groupBy: 'vendor' | 'service';
+        paymentStatus?: string[];
     }) => {
-        const cacheKey = `report_${params.startDate}_${params.endDate}_${params.groupBy}`;
+        const paymentStatusKey = params.paymentStatus?.length
+            ? `_ps_${[...params.paymentStatus].sort().join(',')}`
+            : '';
+        const cacheKey = `report_${params.startDate}_${params.endDate}_${params.groupBy}${paymentStatusKey}`;
 
         // Check session cache
         const cached = reportCache.get(cacheKey);
@@ -282,6 +286,9 @@ export const subscriptionService = {
             endDate: params.endDate,
             groupBy: params.groupBy
         });
+        if (params.paymentStatus && params.paymentStatus.length > 0) {
+            searchParams.set('paymentStatus', params.paymentStatus.join(','));
+        }
         const response = await fetch(`/api/reports/aggregated?${searchParams}`, { cache: 'no-store' });
         if (!response.ok) throw new Error('Failed to fetch aggregated report');
 

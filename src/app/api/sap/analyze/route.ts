@@ -17,9 +17,11 @@ import {
 /**
  * POST /api/sap/analyze
  *
- * Read-only analysis route. Fetches SAP GL data via OData, runs the ETL
+ * SAP analysis route. Fetches SAP GL data via OData, runs the ETL
  * pipeline (classify -> reconstruct -> match), and returns a comparison
- * against the current Supabase invoices. Zero writes.
+ * against the current Supabase invoices.
+ *
+ * Side effect: syncs payment_status on matched sub_invoices rows.
  */
 export async function POST(request: Request) {
   const { response } = await requireAuth();
@@ -267,6 +269,27 @@ export async function POST(request: Request) {
     }
     if (!monitoringUrl) {
       warnings.push('SAP_ODATA_MONITORING_URL is not configured — payment status unavailable.');
+    }
+
+    // --- Step 8: Sync payment status to DB for matched invoices ---
+    const paymentStatusUpdates: { id: string; payment_status: string }[] = [];
+    for (const m of matched) {
+      const ps = m.etl.paymentStatus;
+      if (ps && ps !== 'Unknown' && m.supabase?.id) {
+        paymentStatusUpdates.push({ id: m.supabase.id, payment_status: ps });
+      }
+    }
+
+    if (paymentStatusUpdates.length > 0) {
+      let syncedCount = 0;
+      for (const upd of paymentStatusUpdates) {
+        const { error } = await supabase
+          .from('sub_invoices')
+          .update({ payment_status: upd.payment_status })
+          .eq('id', upd.id);
+        if (!error) syncedCount++;
+      }
+      console.log(`[SAP Analyze] Synced payment_status for ${syncedCount}/${paymentStatusUpdates.length} matched invoices`);
     }
 
     // Build payment status summary from all ETL invoices

@@ -13,6 +13,13 @@ import {
 
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#84cc16', '#f97316', '#14b8a6'];
 
+const PAYMENT_STATUS_OPTIONS = [
+    { label: 'Paid', value: 'Paid' },
+    { label: 'Not Paid', value: 'Not Paid' },
+    { label: 'Cancelled', value: 'Cancelled' },
+    { label: 'Unknown', value: 'Unknown' },
+];
+
 type GroupByOption = 'vendor' | 'service';
 type QuickFilter = 'TTM' | 'Last Year' | 'YTD' | 'Last Quarter' | 'Last Month' | 'Current Month' | 'Custom';
 type ExpandedChart = 'Trend' | 'Breakdown' | null;
@@ -53,7 +60,7 @@ function getDateRange(filter: QuickFilter, customStart?: string, customEnd?: str
     const now = new Date();
     switch (filter) {
         case 'TTM':
-            return { startDate: format(startOfMonth(subMonths(now, 12)), 'yyyy-MM-dd'), endDate: format(endOfMonth(subMonths(now, 1)), 'yyyy-MM-dd') };
+            return { startDate: format(startOfMonth(subMonths(now, 11)), 'yyyy-MM-dd'), endDate: format(endOfMonth(now), 'yyyy-MM-dd') };
         case 'Last Year':
             return { startDate: format(startOfYear(subYears(now, 1)), 'yyyy-MM-dd'), endDate: format(endOfYear(subYears(now, 1)), 'yyyy-MM-dd') };
         case 'YTD':
@@ -79,6 +86,7 @@ export function AnalyticsView() {
     const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
     const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
     const [selectedServices, setSelectedServices] = useState<string[]>([]);
+    const [selectedPaymentStatuses, setSelectedPaymentStatuses] = useState<string[]>([]);
     const [searchQuery, setSearchQuery] = useState<string>('');
     const [expandedChart, setExpandedChart] = useState<ExpandedChart>(null);
     const [chartsReady, setChartsReady] = useState(false);
@@ -88,14 +96,19 @@ export function AnalyticsView() {
         setLoading(true);
         try {
             const { startDate, endDate } = getDateRange(quickFilter, customStartDate, customEndDate);
-            const data = await subscriptionService.getAggregatedReport({ startDate, endDate, groupBy });
+            const data = await subscriptionService.getAggregatedReport({
+                startDate,
+                endDate,
+                groupBy,
+                paymentStatus: selectedPaymentStatuses.length > 0 ? selectedPaymentStatuses : undefined,
+            });
             setReportData(data);
         } catch (error) {
             console.error('Failed to fetch report:', error);
         } finally {
             setLoading(false);
         }
-    }, [quickFilter, customStartDate, customEndDate, groupBy]);
+    }, [quickFilter, customStartDate, customEndDate, groupBy, selectedPaymentStatuses]);
 
     useEffect(() => { fetchReport(); }, [fetchReport]);
 
@@ -317,8 +330,9 @@ export function AnalyticsView() {
                 <MultiSelect placeholder="All Months" options={reportData?.filters.availableMonths.map(m => ({ label: format(parseISO(m + '-01'), 'MMM yyyy'), value: m })) || []} selected={selectedMonths} onChange={setSelectedMonths} className="w-48" />
                 <MultiSelect placeholder="All Vendors" options={reportData?.filters.availableVendors.map(v => ({ label: v, value: v })) || []} selected={selectedVendors} onChange={setSelectedVendors} className="w-48" />
                 <MultiSelect placeholder="All Services" options={reportData?.filters.availableServices.map(s => ({ label: s, value: s })) || []} selected={selectedServices} onChange={setSelectedServices} className="w-48" />
-                {(selectedMonths.length > 0 || selectedVendors.length > 0 || selectedServices.length > 0 || searchQuery) && (
-                    <button onClick={() => { setSelectedMonths([]); setSelectedVendors([]); setSelectedServices([]); setSearchQuery(''); }} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded-lg ml-auto transition-colors">
+                <MultiSelect placeholder="Payment Status" options={PAYMENT_STATUS_OPTIONS} selected={selectedPaymentStatuses} onChange={setSelectedPaymentStatuses} className="w-48" />
+                {(selectedMonths.length > 0 || selectedVendors.length > 0 || selectedServices.length > 0 || selectedPaymentStatuses.length > 0 || searchQuery) && (
+                    <button onClick={() => { setSelectedMonths([]); setSelectedVendors([]); setSelectedServices([]); setSelectedPaymentStatuses([]); setSearchQuery(''); }} className="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded-lg ml-auto transition-colors">
                         <X className="w-3.5 h-3.5" /> Clear
                     </button>
                 )}
@@ -392,7 +406,7 @@ export function AnalyticsView() {
                 <div className={`bg-white rounded-xl border border-slate-200 shadow-sm transition-all duration-300 ${expandedChart === 'Breakdown' ? 'fixed inset-4 z-50 p-6' : 'p-6'}`}>
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-sm font-bold text-slate-900">
-                            Total: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(totalCost)}
+                            Total: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(totalCost)}
                         </h3>
                         <button onClick={() => setExpandedChart(expandedChart === 'Breakdown' ? null : 'Breakdown')} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 rounded-lg transition-colors" title={expandedChart === 'Breakdown' ? "Minimize" : "Maximize"}>
                             {expandedChart === 'Breakdown' ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-4 h-4" />}
@@ -443,7 +457,7 @@ export function AnalyticsView() {
                                                 <Filter className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-500 transition-colors ml-auto" />
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-right text-slate-900 font-medium">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(row.cost)}</td>
+                                        <td className="px-4 py-3 text-right text-slate-900 font-medium">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(row.cost)}</td>
                                         <td className="px-4 py-3 text-right text-slate-500">{row.percentage.toFixed(1)}%</td>
                                     </tr>
                                 ))}
@@ -455,7 +469,7 @@ export function AnalyticsView() {
                                 <tfoot className="bg-slate-50 border-t border-slate-200">
                                     <tr>
                                         <td className="px-4 py-3 font-semibold text-slate-900">Total</td>
-                                        <td className="px-4 py-3 text-right font-bold text-slate-900">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(totalCost)}</td>
+                                        <td className="px-4 py-3 text-right font-bold text-slate-900">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(totalCost)}</td>
                                         <td className="px-4 py-3 text-right text-slate-500 font-medium">100%</td>
                                     </tr>
                                 </tfoot>

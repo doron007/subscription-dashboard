@@ -1,26 +1,28 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { subscriptionService } from '@/services/subscriptionService';
-import type { Invoice } from '@/types';
 import { StatsCard } from '@/components/dashboard/StatsCard';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { DollarSign, AlertCircle, CheckCircle } from 'lucide-react';
-import { format } from 'date-fns';
+import { DollarSign, AlertCircle, CheckCircle, CreditCard } from 'lucide-react';
 import { AnalyticsView } from '@/components/analytics/AnalyticsView';
 
-interface InvoiceWithVendor extends Invoice {
-  vendorName?: string;
+interface KpiData {
+  spendYTD: number;
+  paidYTD: number;
+  outstandingAmount: number;
+  unpaidCount: number;
+  paymentStatusCounts: Record<string, number>;
+  year: number;
 }
 
 export default function Dashboard() {
-  const [invoices, setInvoices] = useState<InvoiceWithVendor[]>([]);
+  const [kpi, setKpi] = useState<KpiData | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     try {
-      const invoicesData = await subscriptionService.getInvoices().catch(() => []);
-      setInvoices(invoicesData);
+      const res = await fetch('/api/reports/kpi', { cache: 'no-store' });
+      if (res.ok) setKpi(await res.json());
     } catch (err) {
       console.error("Failed to load dashboard data", err);
     } finally {
@@ -31,34 +33,37 @@ export default function Dashboard() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const now = new Date();
-  const yearPrefix = `${now.getFullYear()}-`; // "2026-" — string compare avoids timezone bugs
 
-  const isYTD = (inv: InvoiceWithVendor) => inv.invoiceDate >= yearPrefix;
-
-  const spendYTD = invoices.reduce((acc, inv) => {
-    return isYTD(inv) ? acc + (inv.totalAmount || 0) : acc;
-  }, 0);
-
-  const paidYTD = invoices.reduce((acc, inv) => {
-    return inv.status === 'Paid' && isYTD(inv) ? acc + (inv.totalAmount || 0) : acc;
-  }, 0);
-
-  const outstandingAmount = invoices.reduce((acc, inv) => {
-    return (inv.status === 'Pending' || inv.status === 'Overdue') && isYTD(inv) ? acc + (inv.totalAmount || 0) : acc;
-  }, 0);
-
-  const pendingYTD = invoices.filter(inv => (inv.status === 'Pending' || inv.status === 'Overdue') && isYTD(inv));
-  const pendingCount = pendingYTD.length;
-  const oldestPending = pendingYTD
-    .map(inv => new Date(inv.invoiceDate))
-    .sort((a, b) => a.getTime() - b.getTime())[0];
+  const spendYTD = kpi?.spendYTD || 0;
+  const paidYTD = kpi?.paidYTD || 0;
+  const outstandingAmount = kpi?.outstandingAmount || 0;
+  const unpaidCount = kpi?.unpaidCount || 0;
 
   const outstandingSubtext = outstandingAmount > 0
-    ? `${pendingCount} invoices${oldestPending ? ' \u2022 Oldest: ' + format(oldestPending, 'MMM d, yyyy') : ''}`
+    ? `${unpaidCount} invoice${unpaidCount !== 1 ? 's' : ''} unpaid`
     : 'All clear';
 
+  const psCounts = kpi?.paymentStatusCounts || {};
+  const totalWithStatus = Object.entries(psCounts)
+    .filter(([s]) => s !== 'Unknown')
+    .reduce((sum, [, c]) => sum + c, 0);
+  const sapPaidCount = psCounts['Paid'] || 0;
+
+  const hasPaymentStatusData = totalWithStatus > 0;
+
+  const paymentStatusSubtext = hasPaymentStatusData
+    ? Object.entries(psCounts)
+        .filter(([, count]) => count > 0)
+        .map(([status, count]) => `${status}: ${count}`)
+        .join(' \u2022 ')
+    : 'No SAP data available';
+
+  const paymentStatusValue = totalWithStatus > 0
+    ? `${sapPaidCount}/${totalWithStatus} Paid`
+    : 'N/A';
+
   const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(amount);
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(amount);
 
   if (loading) {
     return (
@@ -72,7 +77,7 @@ export default function Dashboard() {
     <DashboardLayout>
       <div className="space-y-6 max-w-7xl mx-auto">
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatsCard
             label={`Total Spend YTD (${now.getFullYear()})`}
             value={formatCurrency(spendYTD)}
@@ -88,6 +93,12 @@ export default function Dashboard() {
             value={formatCurrency(outstandingAmount)}
             icon={AlertCircle}
             subtext={outstandingSubtext}
+          />
+          <StatsCard
+            label="SAP Payment Status"
+            value={paymentStatusValue}
+            icon={CreditCard}
+            subtext={paymentStatusSubtext}
           />
         </div>
 
