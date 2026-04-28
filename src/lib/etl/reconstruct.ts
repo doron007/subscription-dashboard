@@ -65,13 +65,16 @@ export function reconstructInvoices(rows: ClassifiedRow[]): ETLInvoice[] {
 
 /**
  * Navigator: Group by posting date + service description base (one invoice per service per date).
- * Navigator has separate services (ByDesign Managed Services, SAP BYD Software Subs, etc.)
- * each with 12% + 80% allocation splits. Create one invoice per service, not per date.
+ * SAP OData emits three allocation rows per invoice: 12% (Navigator), 80% (SEF inter-company),
+ * and 8% (OpCo). The 8% row started flowing through OData around April 2026; when present,
+ * rawSum across the three rows equals the full invoice. For older periods where OData only
+ * emits 12% + 80% (= 92% of total), the 8% portion is synthesized as a fallback so the
+ * reconstructed total still matches the historical DB invoices.
  */
 export function reconstructNavigator(rows: ClassifiedRow[], supabaseVendor: string): ETLInvoice[] {
   const groups = new Map<string, ClassifiedRow[]>();
   for (const row of rows) {
-    const descBase = row.description.replace(/\s*-\s*(12|80)%\s*$/, '').trim();
+    const descBase = row.description.replace(/\s*-\s*(12|80|8)%\s*$/, '').trim();
     const key = `${row.postingDate}|${descBase}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(row);
@@ -79,29 +82,36 @@ export function reconstructNavigator(rows: ClassifiedRow[], supabaseVendor: stri
 
   return Array.from(groups.entries()).map(([key, group]) => {
     const rawSum = group.reduce((s, r) => s + r.debitAmount - r.creditAmount, 0);
+
+    const pct12 = group.filter(r => r.description.includes('12%'));
+    const pct80 = group.filter(r => r.description.includes('80%'));
+    const pct8 = group.filter(r => / - 8%\s*$/.test(r.description));
+
     let computedAmount = rawSum;
     let note = '';
 
-    // Find the 12% and 80% parts
-    const pct12 = group.filter(r => r.description.includes('12%'));
-    const pct80 = group.filter(r => r.description.includes('80%'));
-
-    if (pct12.length > 0 && pct80.length > 0) {
+    if (pct12.length > 0 && pct80.length > 0 && pct8.length === 0) {
+      // Legacy fallback: OData is missing the 8% (OpCo) row for this period.
+      // Compute full from 12% allocation, synthesize 8% line so totals match DB.
       const amt12 = pct12.reduce((s, r) => s + r.debitAmount, 0);
-      computedAmount = amt12 / 0.12;
       const amt80 = pct80.reduce((s, r) => s + r.debitAmount, 0);
+      computedAmount = amt12 / 0.12;
       const amt8 = Math.round((computedAmount * 0.08) * 100) / 100;
-      note = `12%=${amt12.toFixed(2)} + 80%=${amt80.toFixed(2)} + 8%=${amt8.toFixed(2)} → full=${computedAmount.toFixed(2)}`;
 
-      // Add synthetic 8% line item so line items sum to 100% of invoice total
-      const descBase = group[0].description.replace(/\s*-\s*(12|80)%\s*$/, '').trim();
-      const synthetic8pct: ClassifiedRow = {
+      const descBase = group[0].description.replace(/\s*-\s*(12|80|8)%\s*$/, '').trim();
+      group.push({
         ...group[0],
         description: `${descBase} - 8%`,
         debitAmount: amt8,
         creditAmount: 0,
-      };
-      group.push(synthetic8pct);
+      });
+
+      note = `12%=${amt12.toFixed(2)} + 80%=${amt80.toFixed(2)} + 8%=${amt8.toFixed(2)} (synth) → full=${computedAmount.toFixed(2)}`;
+    } else if (pct12.length > 0 || pct80.length > 0 || pct8.length > 0) {
+      const amt12 = pct12.reduce((s, r) => s + r.debitAmount, 0);
+      const amt80 = pct80.reduce((s, r) => s + r.debitAmount, 0);
+      const amt8 = pct8.reduce((s, r) => s + r.debitAmount, 0);
+      note = `12%=${amt12.toFixed(2)} + 80%=${amt80.toFixed(2)} + 8%=${amt8.toFixed(2)} → full=${rawSum.toFixed(2)}`;
     }
 
     return {
